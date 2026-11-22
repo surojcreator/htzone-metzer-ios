@@ -30,37 +30,34 @@ struct ItemDetailView: View {
         detail?.subtitle.nonEmpty ?? item.subtitle.nonEmpty
     }
 
-    /// Stock row currently selected by the variant picker.
-    private var selectedVariant: StockVariant? {
-        guard let detail, detail.stockVariants.indices.contains(variantIndex) else { return nil }
-        return detail.stockVariants[variantIndex]
-    }
-
     private var displayPrice: Double? {
-        selectedVariant?.price ?? detail?.price ?? item.price
+        detail?.variantPrice(at: variantIndex) ?? detail?.price ?? item.price
     }
 
     private var displayFullPrice: Double? {
-        selectedVariant?.fullPrice ?? detail?.fullPrice ?? item.fullPrice
+        detail?.variantFullPrice(at: variantIndex) ?? detail?.fullPrice ?? item.fullPrice
     }
 
     private var selectedCollectedId: String? {
         guard detail?.isCollected == true else { return nil }
-        return ItemDetailView.sanitizedCollectedId(selectedVariant?.collectedId)
+        return ItemDetailView.sanitizedCollectedId(detail?.collectedId(at: variantIndex))
             ?? ItemDetailView.sanitizedCollectedId(detail?.defaultCollectedId)
     }
 
-    private var selectedStock: Int? { selectedVariant?.stock }
+    private var selectedStock: Int? { detail?.stockCount(at: variantIndex) }
 
     private var isSelectionSoldOut: Bool {
-        guard let selectedStock else { return false }
-        return selectedStock <= 0
+        guard let detail else { return false }
+        if detail.hasVariants { return !detail.isPurchasable(at: variantIndex) }
+        return !detail.inStock
     }
 
     private var isAddDisabled: Bool { isAdding || isSelectionSoldOut }
 
     private var quantityUpperBound: Int {
-        max(1, min(selectedStock ?? 20, 20))
+        let stock = selectedStock ?? 20
+        let limit = detail?.maxPurchase(at: variantIndex) ?? 20
+        return max(1, min(min(stock, limit), 20))
     }
 
     /// "0" is the API sentinel for "no variant".
@@ -291,15 +288,14 @@ struct ItemDetailView: View {
         }
     }
 
-    /// Only options that line up with an `items_stock` row can be purchased.
+    /// Only options that carry a purchasable id can be selected.
     private func optionSoldOut(_ index: Int) -> Bool {
         guard let detail else { return false }
-        if let stock = detail.stockCount(at: index) { return stock <= 0 }
-        return true
+        return detail.hasVariants && !detail.isPurchasable(at: index)
     }
 
     private func stockAvailable(_ detail: ItemDetail) -> Bool {
-        if let selectedStock { return selectedStock > 0 }
+        if detail.hasVariants { return detail.isPurchasable(at: variantIndex) }
         return detail.inStock
     }
 
@@ -307,7 +303,9 @@ struct ItemDetailView: View {
         guard stockAvailable(detail) else {
             return detail.outOfStockMessage.nonEmpty ?? "אזל מהמלאי"
         }
-        if let selectedStock { return "במלאי · \(selectedStock)" }
+        if detail.hasVariants, let stock = selectedStock, stock > 0 {
+            return "במלאי · \(stock)"
+        }
         return "במלאי"
     }
 

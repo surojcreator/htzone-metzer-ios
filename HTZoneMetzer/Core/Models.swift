@@ -190,7 +190,8 @@ struct Item: Identifiable, Hashable {
         reviews = object["reviews"]?.intValue ?? 0
         isCollected = (object["collected"]?.boolValue ?? false)
             || !((object["collectedIds"]?.isNull) ?? true)
-        optionCount = Item.featureOptionCount(object["features"])
+        optionCount = max(Item.featureOptionCount(object["features"]),
+                          JSONCollections.array(object["items_collected"]).count)
         imageURL = Item.makeURL(object["img"]?.stringValue, mediaServer: mediaServer)
     }
 
@@ -467,6 +468,12 @@ struct FeatureGroup: Identifiable, Hashable {
 struct VariantOption: Identifiable, Hashable {
     let id: String
     let title: String
+    /// Purchasable row id (`item_collected_id`), nil for display-only options.
+    let collectedId: String?
+    let stock: Int?
+    let maxPurchase: Int?
+    let price: Double?
+    let fullPrice: Double?
 }
 
 /// A selectable variant dimension.
@@ -493,6 +500,16 @@ private struct ParsedFeatureGroup {
     let id: String
     let title: String
     let options: [VariantOption]
+}
+
+/// One row of `items_collected`: the authoritative variant list with prices.
+private struct ParsedCollectedItem {
+    let id: String
+    let title: String
+    let price: Double?
+    let fullPrice: Double?
+    let totalStock: Int?
+    let maxPurchase: Int?
 }
 
 struct DeliveryOption: Identifiable, Hashable {
@@ -553,6 +570,7 @@ struct ItemDetail: Hashable {
 
         let priceObject = ItemDetail.priceObject(object["priceArr"])
         let stocks = ItemDetail.parseStock(object["items_stock"])
+        let collectedItems = ItemDetail.parseCollectedItems(object["items_collected"])
         stockVariants = stocks
 
         // `collected_id` is the variant the server is currently pricing; "0"
@@ -561,6 +579,8 @@ struct ItemDetail: Hashable {
         if let explicit = priceObject?["collected_id"]?.stringValue?.nonEmpty,
            explicit != "0" {
             resolvedCollectedId = explicit
+        } else if let first = collectedItems.first?.id {
+            resolvedCollectedId = first
         } else if let first = stocks.first, first.collectedId != "0" {
             resolvedCollectedId = first.collectedId
         }
@@ -572,20 +592,65 @@ struct ItemDetail: Hashable {
             FeatureGroup(id: group.id, title: group.title, values: group.options.map(\.title))
         }
 
+        var stockByCollected: [String: StockVariant] = [:]
+        for stock in stocks { stockByCollected[stock.collectedId] = stock }
+
         var variant: VariantGroup?
-        if collected, stocks.count > 1 {
-            let candidates = parsedGroups.filter { $0.options.count > 1 }
-            let aligned = candidates.filter { $0.options.count == stocks.count }
-            func isColour(_ group: ParsedFeatureGroup) -> Bool {
-                let title = group.title.lowercased()
-                return title.contains("צבע") || title.contains("color") || title.contains("colour")
-            }
-            let chosen = aligned.first(where: isColour)
-                ?? aligned.first
-                ?? candidates.first(where: isColour)
-                ?? candidates.max { $0.options.count < $1.options.count }
-            if let chosen {
-                variant = VariantGroup(id: chosen.id, title: chosen.title, options: chosen.options)
+        if collected {
+            if collectedItems.count > 1 {
+                // `items_collected` is authoritative: one row per purchasable
+                // variant, with its own title, price and purchase limit.
+                let titleGroup = parsedGroups.first { $0.options.count == collectedItems.count }
+                let options = collectedItems.indices.map { index -> VariantOption in
+                    let item = collectedItems[index]
+                    let stock = stockByCollected[item.id]
+                    var fallbackTitle = ""
+                    if let titleGroup, titleGroup.options.indices.contains(index) {
+                        fallbackTitle = titleGroup.options[index].title
+                    }
+                    let title = item.title.nonEmpty
+                        ?? fallbackTitle.nonEmpty
+                        ?? "אפשרות \(index + 1)"
+                    return VariantOption(
+                        id: item.id,
+                        title: title,
+                        collectedId: item.id,
+                        stock: stock?.stock ?? item.totalStock,
+                        maxPurchase: item.maxPurchase,
+                        price: item.price ?? stock?.price,
+                        fullPrice: item.fullPrice ?? stock?.fullPrice
+                    )
+                }
+                variant = VariantGroup(id: titleGroup?.id ?? "collected",
+                                       title: titleGroup?.title ?? "אפשרויות",
+                                       options: options)
+            } else if stocks.count > 1 {
+                // Fallback for payloads without `items_collected`: align the
+                // feature group with `items_stock` rows by index.
+                let candidates = parsedGroups.filter { $0.options.count > 1 }
+                let aligned = candidates.filter { $0.options.count == stocks.count }
+                func isColour(_ group: ParsedFeatureGroup) -> Bool {
+                    let title = group.title.lowercased()
+                    return title.contains("צבע") || title.contains("color") || title.contains("colour")
+                }
+                let chosen = aligned.first(where: isColour)
+                    ?? aligned.first
+                    ?? candidates.first(where: isColour)
+                    ?? candidates.max { $0.options.count < $1.options.count }
+                if let chosen {
+                    let options = chosen.options.indices.map { index -> VariantOption in
+                        let option = chosen.options[index]
+                        let stock: StockVariant? = stocks.indices.contains(index) ? stocks[index] : nil
+                        return VariantOption(id: option.id,
+                                             title: option.title,
+                                             collectedId: stock?.collectedId,
+                                             stock: stock?.stock,
+                                             maxPurchase: nil,
+                                             price: stock?.price,
+                                             fullPrice: stock?.fullPrice)
+                    }
+                    variant = VariantGroup(id: chosen.id, title: chosen.title, options: options)
+                }
             }
         }
         variantGroups = variant.map { [$0] } ?? []
@@ -613,29 +678,48 @@ struct ItemDetail: Hashable {
 
     // MARK: - Variant helpers
 
-    /// Index the server is currently pricing the product at.
+    /// Index of the variant the server currently prices the product at.
     var defaultVariantIndex: Int {
-        guard let defaultCollectedId,
-              let index = stockVariants.firstIndex(where: { $0.collectedId == defaultCollectedId }) else {
-            return 0
-        }
-        return index
+        guard let group = variantGroups.first, let defaultCollectedId else { return 0 }
+        return group.options.firstIndex { ($0.collectedId ?? $0.id) == defaultCollectedId } ?? 0
     }
 
-    /// `collectedId` for an option index, aligned with `items_stock` order.
     func collectedId(at index: Int) -> String? {
-        guard stockVariants.indices.contains(index) else { return nil }
-        return stockVariants[index].collectedId
+        guard let group = variantGroups.first, group.options.indices.contains(index) else {
+            return defaultCollectedId
+        }
+        return group.options[index].collectedId
     }
 
     func stockCount(at index: Int) -> Int? {
-        guard stockVariants.indices.contains(index) else { return nil }
-        return stockVariants[index].stock
+        guard let group = variantGroups.first, group.options.indices.contains(index) else { return nil }
+        return group.options[index].stock
+    }
+
+    func maxPurchase(at index: Int) -> Int? {
+        guard let group = variantGroups.first, group.options.indices.contains(index) else { return nil }
+        return group.options[index].maxPurchase
     }
 
     func variantPrice(at index: Int) -> Double? {
-        guard stockVariants.indices.contains(index) else { return nil }
-        return stockVariants[index].price
+        guard let group = variantGroups.first, group.options.indices.contains(index) else { return nil }
+        return group.options[index].price
+    }
+
+    func variantFullPrice(at index: Int) -> Double? {
+        guard let group = variantGroups.first, group.options.indices.contains(index) else { return nil }
+        return group.options[index].fullPrice
+    }
+
+    /// A variant can be bought only when it has an id to send and stock left.
+    func isPurchasable(at index: Int) -> Bool {
+        guard let group = variantGroups.first, group.options.indices.contains(index) else { return false }
+        let option = group.options[index]
+        if let stock = option.stock, stock <= 0 { return false }
+        guard let collectedId = option.collectedId,
+              !collectedId.isEmpty,
+              collectedId != "0" else { return false }
+        return true
     }
 
     var hasVariants: Bool { !variantGroups.isEmpty }
@@ -732,6 +816,29 @@ struct ItemDetail: Hashable {
         labelled.append((id: optionId, title: label))
     }
 
+    /// `items_collected` rows: id, title, price and purchase limits per variant.
+    private static func parseCollectedItems(_ value: JSONValue?) -> [ParsedCollectedItem] {
+        JSONCollections.array(value).compactMap { entry in
+            guard let object = entry.objectValue else { return nil }
+            let id = object["id"]?.stringValue?.nonEmpty
+                ?? object["collected_id"]?.stringValue?.nonEmpty
+            guard let id else { return nil }
+            return ParsedCollectedItem(
+                id: id,
+                title: object["title"]?.stringValue?.nonEmpty ?? "",
+                price: ItemDetail.positive(object["price"]?.doubleValue),
+                fullPrice: ItemDetail.positive(object["full_price"]?.doubleValue),
+                totalStock: object["total_stock"]?.intValue,
+                maxPurchase: object["max_purchase"]?.intValue
+            )
+        }
+    }
+
+    private static func positive(_ value: Double?) -> Double? {
+        guard let value, value > 0 else { return nil }
+        return value
+    }
+
     /// `items_stock` is keyed by a numeric row id; the numeric key order matches
     /// the order of the variant dimension's options.
     private static func parseStock(_ value: JSONValue?) -> [StockVariant] {
@@ -750,10 +857,10 @@ struct ItemDetail: Hashable {
                 id: id,
                 collectedId: collectedId,
                 stock: stock,
-                price: object["price"]?.doubleValue
-                    ?? object["sale_price"]?.doubleValue
-                    ?? object["final_price"]?.doubleValue,
-                fullPrice: object["full_price"]?.doubleValue
+                price: ItemDetail.positive(object["price"]?.doubleValue)
+                    ?? ItemDetail.positive(object["sale_price"]?.doubleValue)
+                    ?? ItemDetail.positive(object["final_price"]?.doubleValue),
+                fullPrice: ItemDetail.positive(object["full_price"]?.doubleValue)
             )
         }
     }

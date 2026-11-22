@@ -136,9 +136,9 @@ values and does not attempt to encode anything special.
   `popup_validate`, but the exact validation payload is inferred.
 - Product detail falls back to the list payload if `getItem` rejects an item
   (`234` product unavailable).
-- Variant mapping relies on `items_stock` row order matching the option order in
-  `features`; when a stock row carries no price the product's `priceArr` price is
-  shown for that option.
+- Variant mapping prefers `items_collected` (per-variant title, price and
+  `max_purchase`); for payloads without it the option order is aligned with
+  `items_stock` rows and the product price is shown for every option.
 - Filters and brand shortcuts are not exposed: `getCategory.filters` and
   `dynamic_fieldsArr` come back empty and `getItems.brands` is `null` for the
   catalog branches tested.
