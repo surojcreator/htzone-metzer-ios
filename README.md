@@ -61,13 +61,15 @@ Every call is `POST <base><method>/` with:
 ```
 salt   = 16 random bytes
 nonce  = 12 random bytes
-key    = PBKDF2-HMAC-SHA256("1inmahtzonenage2", salt, 32767, 16)
+key    = PBKDF2-HMAC-SHA256(staticKey, salt, 32767, 16)
 ct+tag = AES-GCM(key, nonce, utf8(plaintext))
 field  = base64(salt || nonce || ct || tag)
 ```
 
-Both `email` and `password` are encrypted this way. Implemented in
-`Core/CredentialCrypto.swift` with CommonCrypto + CryptoKit.
+Both `email` and `password` are encrypted this way. `staticKey` is the 16-byte
+value returned by `BaseEncryption_encryptionKey` in the shipped native library;
+the constant lives in `Core/CredentialCrypto.swift`. Implemented with
+CommonCrypto + CryptoKit.
 
 ### Endpoints used
 
@@ -117,6 +119,12 @@ values and does not attempt to encode anything special.
   server (returns product-not-available) for this tenant.
 - Favourites endpoints require a parameter shape that was not identified, so the
   UI omits favourites.
+
+## Disclaimer
+
+Independent client for an account you own. Not affiliated with, endorsed by, or
+supported by HTZone, Inmanage, or Rafael. It talks to the same endpoints as the
+official Android app, and those endpoints can change without notice.
 
 ## Layout
 
