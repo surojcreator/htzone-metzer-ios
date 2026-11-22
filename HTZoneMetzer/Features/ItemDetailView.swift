@@ -486,9 +486,12 @@ struct ItemDetailView: View {
     private func loadDetail() async {
         detailError = nil
         do {
-            let loaded = try await app.itemDetail(id: item.id)
-            detail = loaded
-            variantIndex = loaded.defaultVariantIndex
+            if let loaded = try await app.itemDetail(id: item.id) {
+                detail = loaded
+                variantIndex = loaded.defaultVariantIndex
+            } else {
+                detailError = "לא ניתן לקרוא את פרטי המוצר"
+            }
         } catch {
             detailError = app.message(for: error)
         }
