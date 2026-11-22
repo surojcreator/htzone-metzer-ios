@@ -8,6 +8,7 @@ import SwiftUI
 struct ItemsView: View {
     let categoryId: String
     let title: String
+    var promos: [PromoItem] = []
 
     @EnvironmentObject private var app: AppState
     @State private var items: [Item] = []
@@ -28,6 +29,38 @@ struct ItemsView: View {
         hasMore && !isLoading
     }
 
+    private var promosSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "הטבות")
+            ForEach(promos) { promo in
+                NavigationLink {
+                    SearchView(initialQuery: promo.title)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(Theme.gold)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(promo.title)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(2)
+                            if let subtitle = promo.subtitle.nonEmpty {
+                                Text(subtitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.left")
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(12)
+                    .cardContainer()
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
@@ -35,6 +68,10 @@ struct ItemsView: View {
                     ErrorBanner(message: error) {
                         Task { await load(reset: true) }
                     }
+                }
+
+                if !promos.isEmpty {
+                    promosSection
                 }
 
                 LazyVGrid(columns: columns, spacing: 12) {

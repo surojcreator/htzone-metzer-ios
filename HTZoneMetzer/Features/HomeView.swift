@@ -37,6 +37,21 @@ struct HomeView: View {
                                 .buttonStyle(.plain)
                             }
                         }
+
+                        NavigationLink {
+                            CatalogView()
+                        } label: {
+                            HStack {
+                                Text("כל \(app.categories.count) הקטגוריות")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(Theme.accent)
+                                Spacer()
+                                Image(systemName: "chevron.left")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -109,8 +124,9 @@ struct HomeView: View {
 
     @ViewBuilder
     private func bannerCard(_ banner: Banner) -> some View {
-        if let categoryId = banner.categoryId,
-           let node = app.categoryNode(id: categoryId) {
+        if let categoryId = banner.categoryId, categoryId != "0" {
+            let node = app.categoryNode(id: categoryId)
+                ?? CategoryNode(id: categoryId, title: banner.title, level: 1, children: [])
             NavigationLink {
                 CategoryDetailView(node: node)
             } label: {

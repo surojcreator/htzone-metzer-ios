@@ -9,10 +9,17 @@ Android app uses. It is an independent front end for an account you control.
 
 - Email/password login with the client-side credential encryption the API expects
 - Persistent session via HTTP cookies; optional Keychain credential storage
-- Catalog tree taken from `generalDeclaration` (top categories → subcategories → items)
-- Item grid with sort (popular / price asc / price desc) and infinite scroll
-- Search with debounce, recent searches, result grid
-- Item detail with comments and related products
+- Catalog tree taken from `generalDeclaration` (25 top categories, ~495 nodes, merged
+  `categories` + `sub_categories`)
+- Category landing pulls live children from `getCategory`, shows promo cards from
+  `connected_items`, an item preview, and an “all items” entry
+- Item grid pages through `getItems` (100 per page) until the server runs out,
+  even when `total_items` is missing; “load more” button as a fallback
+- Full item detail from `getItem { itemId }`: image gallery, brief, spec groups,
+  delivery options, stock/warranty, and a link to the web page
+- Home banner carousel from `home_page_bannersArr` (`tv_banners` + `elipses`)
+- Search with debounce, recent searches, result grid, and category matches
+  (the server caps search at 8 results)
 - Add to cart, including the metzer-credit popup flow
 - Cart view with remove and total
 - Orders list and order detail (line items, supplier totals, payments)
@@ -123,8 +130,11 @@ values and does not attempt to encode anything special.
   `addToCart` returns a `popupObject` asking for the account’s national ID and the
   last six digits of that card. The app renders the popup and submits it via
   `popup_validate`, but the exact validation payload is inferred.
-- Product detail is built from search/related payloads; `getItem` is gated on the
-  server (returns product-not-available) for this tenant.
+- Product detail falls back to the list payload if `getItem` rejects an item
+  (`234` product unavailable).
+- Filters and brand shortcuts are not exposed: `getCategory.filters` and
+  `dynamic_fieldsArr` come back empty and `getItems.brands` is `null` for the
+  catalog branches tested.
 - Favourites endpoints require a parameter shape that was not identified, so the
   UI omits favourites.
 

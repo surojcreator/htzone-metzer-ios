@@ -129,7 +129,7 @@ struct CategoryDetailView: View {
         Group {
             if let info {
                 if effectiveChildren.isEmpty {
-                    ItemsView(categoryId: info.id.isEmpty ? node.id : info.id, title: title)
+                    ItemsView(categoryId: info.id.isEmpty ? node.id : info.id, title: title, promos: info.promos)
                 } else {
                     CategoryLanding(node: node, info: info, children: effectiveChildren, title: title)
                 }
