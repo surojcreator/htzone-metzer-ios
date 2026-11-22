@@ -25,6 +25,10 @@ Android app uses. It is an independent front end for an account you control.
 - Search with debounce, recent searches, result grid, and category matches
   (the server caps search at 8 results)
 - Add to cart, including the metzer-credit popup flow
+- Local favourites (heart on every card and on the detail screen) and a
+  recently-viewed rail on the home screen, both cached on-device
+- Product sharing from the detail toolbar, pull-to-refresh on home, category,
+  cart and order lists
 - Cart view with remove and total
 - Orders list and order detail (line items, supplier totals, payments)
 - Account: wallet, saved cards (masked), addresses, about page
@@ -73,7 +77,9 @@ Every call is `POST <base><method>/` with:
 
 `data` must be the only top-level key. Responses are
 `{ "status": 1|0, "err": ..., "data": ... }`. The app decodes into a tolerant
-`JSONValue` because field types vary (strings/numbers, arrays/keyed objects).
+`JSONValue` because field types vary (strings/numbers, arrays/keyed objects), and
+repairs the three malformed shapes this backend emits: a UTF-8 BOM, raw control
+characters inside strings, and trailing PHP notices after the payload.
 
 ### Login encryption
 
@@ -142,8 +148,8 @@ values and does not attempt to encode anything special.
 - Filters and brand shortcuts are not exposed: `getCategory.filters` and
   `dynamic_fieldsArr` come back empty and `getItems.brands` is `null` for the
   catalog branches tested.
-- Favourites endpoints require a parameter shape that was not identified, so the
-  UI omits favourites.
+- Favourites endpoints require a parameter shape that was not identified, so
+  favourites are stored locally (the UI never calls the server for them).
 
 ## Disclaimer
 
@@ -166,6 +172,7 @@ ios/
       CredentialCrypto.swift
       JSONValue.swift
       Keychain.swift
+      LibraryStore.swift        # local favourites + history
       Models.swift
     Features/
       RootView.swift          # splash + login
@@ -175,6 +182,7 @@ ios/
       ItemsView.swift
       SearchView.swift
       ItemDetailView.swift    # detail + metzer credit sheet
+      FavoritesView.swift     # favourites grid + heart control
       CartView.swift
       OrdersView.swift
       OrderDetailView.swift

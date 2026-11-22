@@ -194,7 +194,14 @@ final class AppState: ObservableObject {
 
     func cart() async throws -> CartSummary? {
         let data = try await api.cart()
-        return CartSummary(json: data, mediaServer: mediaServer)
+        let summary = CartSummary(json: data, mediaServer: mediaServer)
+        cartCount = summary?.totalItems ?? 0
+        return summary
+    }
+
+    /// Re-fetches the declaration so banners and the category tree refresh.
+    func refreshConfig() async {
+        await loadDeclaration()
     }
 
     func addToCart(itemId: String, quantity: Int, collectedId: String? = nil) async throws -> PopupRequest? {

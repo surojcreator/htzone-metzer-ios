@@ -76,17 +76,12 @@ struct ItemsView: View {
 
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(items) { item in
-                        NavigationLink {
-                            ItemDetailView(item: item)
-                        } label: {
-                            ItemCard(item: item)
-                        }
-                        .buttonStyle(.plain)
-                        .onAppear {
-                            if item.id == items.last?.id, canLoadMore {
-                                Task { await load(reset: false) }
+                        ProductCell(item: item)
+                            .onAppear {
+                                if item.id == items.last?.id, canLoadMore {
+                                    Task { await load(reset: false) }
+                                }
                             }
-                        }
                     }
                 }
 
@@ -130,6 +125,7 @@ struct ItemsView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await load(reset: true) }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {

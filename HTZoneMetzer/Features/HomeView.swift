@@ -7,6 +7,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var library: LibraryStore
     @State private var popular: [String] = []
     @State private var loaded = false
 
@@ -52,6 +53,22 @@ struct HomeView: View {
                             }
                         }
                         .buttonStyle(.plain)
+                    }
+                }
+
+                if !library.recent.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionHeader(title: "נצפו לאחרונה", actionTitle: "נקה") {
+                            library.clearRecent()
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(library.recent) { entry in
+                                    ProductCell(item: entry.item, width: 160)
+                                }
+                            }
+                            .padding(.horizontal, 1)
+                        }
                     }
                 }
 
@@ -101,15 +118,48 @@ struct HomeView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("בית")
         .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await app.refreshConfig()
+            await loadPopular()
+        }
         .task {
             guard !loaded else { return }
             loaded = true
-            if let data = try? await app.api.popularSearches() {
-                popular = Array(JSONCollections.array(data)
-                    .compactMap { $0["term"]?.stringValue }
-                    .prefix(12))
-            }
+            await loadPopular()
         }
+    }
+
+    @MainActor
+    private func loadPopular() async {
+        guard let data = try? await app.api.popularSearches() else { return }
+        popular = HomeView.parsePopular(data)
+    }
+
+    /// The payload shape has varied between a plain list and a wrapped list.
+    static func parsePopular(_ data: JSONValue) -> [String] {
+        var terms: [String] = []
+        let candidates: [JSONValue?] = [
+            data,
+            data["terms"],
+            data["searches"],
+            data["popular"],
+            data["results"]
+        ]
+        for candidate in candidates {
+            for entry in JSONCollections.array(candidate) {
+                if let term = entry.stringValue?.nonEmpty {
+                    terms.append(term)
+                } else if let term = entry["term"]?.stringValue?.nonEmpty
+                    ?? entry["title"]?.stringValue?.nonEmpty
+                    ?? entry["value"]?.stringValue?.nonEmpty
+                    ?? entry["name"]?.stringValue?.nonEmpty {
+                    terms.append(term)
+                }
+            }
+            if !terms.isEmpty { break }
+        }
+        var seen = Set<String>()
+        return Array(terms.filter { seen.insert($0).inserted }.prefix(12))
     }
 
     private var bannerCarousel: some View {

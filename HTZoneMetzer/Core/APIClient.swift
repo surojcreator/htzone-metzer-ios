@@ -90,10 +90,13 @@ actor APIClient {
             throw APIError(code: http.statusCode, message: "שגיאת שרת (\(http.statusCode))")
         }
 
-        let root: JSONValue
-        do {
-            root = try JSONDecoder().decode(JSONValue.self, from: raw)
-        } catch {
+        guard let root = JSONValue.decodeResponse(raw) else {
+            if raw.isEmpty {
+                throw APIError(code: nil, message: "השרת החזיר תגובה ריקה. נסה שוב.")
+            }
+            if JSONValue.responseLooksLikeHTML(raw) {
+                throw APIError(code: nil, message: "השרת החזיר דף חסימה. נסה שוב בעוד רגע.")
+            }
             throw APIError(code: nil, message: "לא ניתן לקרוא את תגובת השרת")
         }
 
@@ -109,11 +112,13 @@ actor APIClient {
             }
         }
 
-        if root["status"]?.intValue != 1 {
+        let status = root["status"]?.intValue
+        let hasError = !(root["err"]?.isNull ?? true)
+        if status != 1, status != nil || hasError {
             let message = root["msg"]?.stringValue
                 ?? root["message"]?.stringValue
                 ?? "הפעולה נכשלה"
-            throw APIError(code: root["status"]?.intValue, message: message)
+            throw APIError(code: status, message: message)
         }
 
         return root["data"] ?? .null

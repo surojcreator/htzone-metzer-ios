@@ -80,13 +80,15 @@ struct SearchView: View {
 
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(results) { item in
-                        NavigationLink {
-                            ItemDetailView(item: item)
-                        } label: {
-                            ItemCard(item: item)
-                        }
-                        .buttonStyle(.plain)
+                        ProductCell(item: item)
                     }
+                }
+
+                if results.count >= 8 {
+                    Text("החיפוש מוגבל לשמונה תוצאות. הוסף מילה כדי לצמצם את הרשימה.")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding()

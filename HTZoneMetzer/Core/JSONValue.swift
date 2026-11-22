@@ -158,3 +158,95 @@ extension String {
         return trimmed.isEmpty ? nil : trimmed
     }
 }
+
+// MARK: - Tolerant response decoding
+
+extension JSONValue {
+    /// Decodes one API response, tolerating what this backend actually emits:
+    /// a UTF-8 BOM, raw control characters inside string literals, or trailing
+    /// PHP notices after the JSON payload. Returns nil when nothing is readable.
+    static func decodeResponse(_ data: Data) -> JSONValue? {
+        guard !data.isEmpty else { return nil }
+        if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            return value
+        }
+        guard let repaired = sanitizedJSON(data) else { return nil }
+        return try? JSONDecoder().decode(JSONValue.self, from: repaired)
+    }
+
+    /// True when the server answered with an HTML challenge page instead of JSON.
+    static func responseLooksLikeHTML(_ data: Data) -> Bool {
+        let head = String(decoding: data.prefix(256), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return head.hasPrefix("<")
+    }
+
+    /// Extracts the first balanced top-level JSON container and escapes raw
+    /// control characters inside strings, dropping anything after the payload.
+    static func sanitizedJSON(_ data: Data) -> Data? {
+        var bytes = Array(data)
+        if bytes.count >= 3, bytes[0] == 0xEF, bytes[1] == 0xBB, bytes[2] == 0xBF {
+            bytes.removeFirst(3)
+        }
+        guard let start = bytes.firstIndex(where: { $0 == 0x7B || $0 == 0x5B }) else {
+            return nil
+        }
+
+        var output: [UInt8] = []
+        output.reserveCapacity(bytes.count - start)
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var index = start
+
+        while index < bytes.count {
+            let byte = bytes[index]
+            if inString {
+                if escaped {
+                    output.append(byte)
+                    escaped = false
+                } else if byte == 0x5C { // backslash
+                    output.append(byte)
+                    escaped = true
+                } else if byte == 0x22 { // closing quote
+                    output.append(byte)
+                    inString = false
+                } else if byte < 0x20 {
+                    // Raw control character (newlines from HTML fragments etc.).
+                    output.append(0x5C)
+                    output.append(0x75)
+                    output.append(0x30)
+                    output.append(0x30)
+                    output.append(hexDigit(byte >> 4))
+                    output.append(hexDigit(byte & 0x0F))
+                } else {
+                    output.append(byte)
+                }
+            } else {
+                if byte == 0x22 {
+                    inString = true
+                    output.append(byte)
+                } else if byte == 0x7B || byte == 0x5B { // { or [
+                    depth += 1
+                    output.append(byte)
+                } else if byte == 0x7D || byte == 0x5D { // } or ]
+                    depth -= 1
+                    output.append(byte)
+                    if depth <= 0 {
+                        break
+                    }
+                } else {
+                    output.append(byte)
+                }
+            }
+            index += 1
+        }
+
+        guard depth == 0, !inString else { return nil }
+        return Data(output)
+    }
+
+    private static func hexDigit(_ value: UInt8) -> UInt8 {
+        value < 10 ? 0x30 + value : 0x41 + value - 10
+    }
+}

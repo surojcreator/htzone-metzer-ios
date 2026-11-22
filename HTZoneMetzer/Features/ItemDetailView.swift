@@ -10,6 +10,7 @@ struct ItemDetailView: View {
     let item: Item
 
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var library: LibraryStore
     @State private var quantity = 1
     @State private var comments: [ItemComment] = []
     @State private var related: [Item] = []
@@ -21,6 +22,7 @@ struct ItemDetailView: View {
     @State private var detail: ItemDetail?
     @State private var galleryIndex = 0
     @State private var variantIndex = 0
+    @State private var detailError: String?
 
     private var displayTitle: String {
         detail?.title.nonEmpty ?? item.title
@@ -73,6 +75,12 @@ struct ItemDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 hero
 
+                if let detailError {
+                    ErrorBanner(message: detailError) {
+                        Task { await loadDetail() }
+                    }
+                }
+
                 header
                 priceBox
                 variantPicker
@@ -96,6 +104,24 @@ struct ItemDetailView: View {
         .background(Theme.background.ignoresSafeArea())
         .navigationTitle("מוצר")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        library.toggleFavorite(item)
+                    }
+                } label: {
+                    Image(systemName: library.isFavorite(item.id) ? "heart.fill" : "heart")
+                        .foregroundStyle(library.isFavorite(item.id) ? Theme.danger : Theme.accent)
+                }
+                .accessibilityLabel(library.isFavorite(item.id) ? "הסר ממועדפים" : "הוסף למועדפים")
+
+                ShareLink(item: shareText) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .accessibilityLabel("שיתוף")
+            }
+        }
         .sheet(item: $popup) { request in
             MetzerCreditSheet(popup: request) { values in
                 try await app.submitPopup(request, values: values)
@@ -116,10 +142,8 @@ struct ItemDetailView: View {
         .task {
             guard !didLoad else { return }
             didLoad = true
-            if let loaded = try? await app.itemDetail(id: item.id) {
-                detail = loaded
-                variantIndex = loaded.defaultVariantIndex
-            }
+            library.recordViewed(item)
+            await loadDetail()
             comments = (try? await app.comments(itemId: item.id)) ?? []
             related = (try? await app.related(itemId: item.id)) ?? []
         }
@@ -456,6 +480,26 @@ struct ItemDetailView: View {
                 .padding(.horizontal, 1)
             }
         }
+    }
+
+    @MainActor
+    private func loadDetail() async {
+        detailError = nil
+        do {
+            let loaded = try await app.itemDetail(id: item.id)
+            detail = loaded
+            variantIndex = loaded.defaultVariantIndex
+        } catch {
+            detailError = app.message(for: error)
+        }
+    }
+
+    private var shareText: String {
+        var parts = [displayTitle]
+        if let subtitle = displaySubtitle { parts.append(subtitle) }
+        if let price = Format.price(displayPrice) { parts.append(price) }
+        if let url = detail?.itemURL?.absoluteString { parts.append(url) }
+        return parts.joined(separator: " · ")
     }
 
     @MainActor

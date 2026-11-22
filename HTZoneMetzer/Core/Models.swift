@@ -215,6 +215,27 @@ struct Item: Identifiable, Hashable {
         return value.arrayValue?.count ?? 0
     }
 
+    /// Rebuilds an item from a cached snapshot (favourites / recently viewed).
+    init(id: String, title: String, subtitle: String, price: Double?, fullPrice: Double?,
+         imageURL: URL?, brand: String, category: String, isPriceFrom: Bool,
+         textInsteadPrice: String, rating: Double, reviews: Int,
+         isCollected: Bool, optionCount: Int) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.price = price
+        self.fullPrice = fullPrice
+        self.imageURL = imageURL
+        self.brand = brand
+        self.category = category
+        self.isPriceFrom = isPriceFrom
+        self.textInsteadPrice = textInsteadPrice
+        self.rating = rating
+        self.reviews = reviews
+        self.isCollected = isCollected
+        self.optionCount = optionCount
+    }
+
     static func makeURL(_ raw: String?, mediaServer: String) -> URL? {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return nil
@@ -233,6 +254,7 @@ struct Item: Identifiable, Hashable {
 struct CartLine: Identifiable, Hashable {
     let id: String
     let title: String
+    let variant: String
     let price: Double
     let quantity: Int
     let imageURL: URL?
@@ -245,6 +267,11 @@ struct CartLine: Identifiable, Hashable {
             ?? UUID().uuidString
         title = object["item_title"]?.stringValue?.nonEmpty
             ?? object["title"]?.stringValue
+            ?? ""
+        variant = object["collected_title"]?.stringValue?.nonEmpty
+            ?? object["collectedTitle"]?.stringValue?.nonEmpty
+            ?? object["variant_title"]?.stringValue?.nonEmpty
+            ?? object["color"]?.stringValue?.nonEmpty
             ?? ""
         price = object["price"]?.doubleValue ?? 0
         quantity = object["quantity"]?.intValue

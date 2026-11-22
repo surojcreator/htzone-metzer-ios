@@ -71,6 +71,12 @@ struct CartView: View {
                 Text(line.title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
+                if let variant = line.variant.nonEmpty {
+                    Text(variant)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: 8) {
                     Text("כמות \(line.quantity)")
                         .font(.caption)
@@ -128,7 +134,6 @@ struct CartView: View {
 
         do {
             cart = try await app.cart()
-            await app.refreshCart()
         } catch {
             self.error = app.message(for: error)
         }

@@ -7,6 +7,7 @@ import SwiftUI
 
 struct AccountView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var library: LibraryStore
     @State private var wallet: WalletInfo?
     @State private var cards: [CardInfo] = []
     @State private var isLoading = false
@@ -166,6 +167,15 @@ struct AccountView: View {
                 OrdersView()
             } label: {
                 linkRow(icon: "shippingbox.fill", title: "ההזמנות שלי")
+            }
+            .buttonStyle(.plain)
+
+            Divider().overlay(Theme.stroke)
+
+            NavigationLink {
+                FavoritesView()
+            } label: {
+                linkRow(icon: "heart.fill", title: "מועדפים (\(library.favorites.count))")
             }
             .buttonStyle(.plain)
 

@@ -283,13 +283,7 @@ struct ItemsPreview: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
                             ForEach(Array(items.prefix(8))) { item in
-                                NavigationLink {
-                                    ItemDetailView(item: item)
-                                } label: {
-                                    ItemCard(item: item)
-                                        .frame(width: 160)
-                                }
-                                .buttonStyle(.plain)
+                                ProductCell(item: item, width: 160)
                             }
                         }
                         .padding(.horizontal, 1)
