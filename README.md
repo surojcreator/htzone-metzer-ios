@@ -1,5 +1,7 @@
 # Metzer — iOS client
 
+[![ios](https://github.com/surojcreator/htzone-metzer-ios/actions/workflows/ios.yml/badge.svg)](https://github.com/surojcreator/htzone-metzer-ios/actions/workflows/ios.yml)
+
 A native SwiftUI client for the HTZone **מצ״ר** account, built on the same API the
 Android app uses. It is an independent front end for an account you control.
 
