@@ -221,7 +221,7 @@ struct AccountView: View {
 
     private var footer: some View {
         VStack(spacing: 4) {
-            Text("HTZone · מצ״ר · גרסה 1.0")
+            Text("HTZone · מצ״ר · גרסה \(appVersion)")
                 .font(.caption2)
                 .foregroundStyle(Theme.textSecondary)
             Text("אפליקציה עצמאית. אינה קשורה ל־HTZone או לרפאל.")
@@ -231,6 +231,12 @@ struct AccountView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
+    }
+
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(version) (\(build))"
     }
 
     @MainActor
