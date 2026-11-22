@@ -1,0 +1,54 @@
+name: ipa
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for device (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project HTZoneMetzer.xcodeproj \
+            -target HTZoneMetzer \
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            SYMROOT="$PWD/build" \
+            OBJROOT="$PWD/build" \
+            build
+
+      - name: Package IPA
+        run: |
+          APP=$(find build/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -1)
+          echo "app bundle: $APP"
+          test -n "$APP"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          cd build/ipa
+          zip -qry ../Metzer-unsigned.ipa Payload
+          cd ../..
+          ls -lh build/Metzer-unsigned.ipa
+          shasum -a 256 build/Metzer-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: metzer-unsigned-ipa
+          path: build/Metzer-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
