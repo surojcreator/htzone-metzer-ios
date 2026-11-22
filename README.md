@@ -19,6 +19,14 @@ Android app uses. It is an independent front end for an account you control.
 - Account: wallet, saved cards (masked), addresses, about page
 - Full Hebrew RTL, dark theme
 
+## Download
+
+A prebuilt **unsigned** IPA is attached to the
+[latest release](https://github.com/surojcreator/htzone-metzer-ios/releases/latest).
+It targets `iphoneos` arm64, minimum iOS 16, and carries no signature.
+Install it by re-signing with your own Apple ID using Sideloadly, AltStore, or a
+similar sideloading tool. It is not an App Store build.
+
 ## Build
 
 Requires macOS with Xcode 15+ and an iOS 16+ device/simulator.
