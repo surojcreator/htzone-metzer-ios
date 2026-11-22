@@ -20,6 +20,7 @@ struct ItemDetailView: View {
     @State private var didLoad = false
     @State private var detail: ItemDetail?
     @State private var galleryIndex = 0
+    @State private var variantIndex = 0
 
     private var displayTitle: String {
         detail?.title.nonEmpty ?? item.title
@@ -29,12 +30,45 @@ struct ItemDetailView: View {
         detail?.subtitle.nonEmpty ?? item.subtitle.nonEmpty
     }
 
+    /// Stock row currently selected by the variant picker.
+    private var selectedVariant: StockVariant? {
+        guard let detail, detail.stockVariants.indices.contains(variantIndex) else { return nil }
+        return detail.stockVariants[variantIndex]
+    }
+
     private var displayPrice: Double? {
-        detail?.price ?? item.price
+        selectedVariant?.price ?? detail?.price ?? item.price
     }
 
     private var displayFullPrice: Double? {
-        detail?.fullPrice ?? item.fullPrice
+        selectedVariant?.fullPrice ?? detail?.fullPrice ?? item.fullPrice
+    }
+
+    private var selectedCollectedId: String? {
+        guard detail?.isCollected == true else { return nil }
+        return ItemDetailView.sanitizedCollectedId(selectedVariant?.collectedId)
+            ?? ItemDetailView.sanitizedCollectedId(detail?.defaultCollectedId)
+    }
+
+    private var selectedStock: Int? { selectedVariant?.stock }
+
+    private var isSelectionSoldOut: Bool {
+        guard let selectedStock else { return false }
+        return selectedStock <= 0
+    }
+
+    private var isAddDisabled: Bool { isAdding || isSelectionSoldOut }
+
+    private var quantityUpperBound: Int {
+        max(1, min(selectedStock ?? 20, 20))
+    }
+
+    /// "0" is the API sentinel for "no variant".
+    private static func sanitizedCollectedId(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              value != "0" else { return nil }
+        return value
     }
 
     var body: some View {
@@ -44,6 +78,7 @@ struct ItemDetailView: View {
 
                 header
                 priceBox
+                variantPicker
                 addBox
                 detailSections
 
@@ -84,7 +119,10 @@ struct ItemDetailView: View {
         .task {
             guard !didLoad else { return }
             didLoad = true
-            detail = try? await app.itemDetail(id: item.id)
+            if let loaded = try? await app.itemDetail(id: item.id) {
+                detail = loaded
+                variantIndex = loaded.defaultVariantIndex
+            }
             comments = (try? await app.comments(itemId: item.id)) ?? []
             related = (try? await app.related(itemId: item.id)) ?? []
         }
@@ -124,8 +162,8 @@ struct ItemDetailView: View {
 
             HStack(spacing: 8) {
                 StatusBadge(
-                    text: detail.inStock ? "במלאי" : (detail.outOfStockMessage.nonEmpty ?? "אזל מהמלאי"),
-                    color: detail.inStock ? Theme.success : Theme.danger
+                    text: stockBadgeText(detail),
+                    color: stockAvailable(detail) ? Theme.success : Theme.danger
                 )
                 if let warranty = detail.warranty.nonEmpty {
                     StatusBadge(text: warranty, color: Theme.accent)
@@ -212,6 +250,67 @@ struct ItemDetailView: View {
         .cardContainer()
     }
 
+    @ViewBuilder
+    private var variantPicker: some View {
+        if let detail, let group = detail.variantGroups.first {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(group.title)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    if let selectedStock {
+                        Text(selectedStock > 0 ? "\(selectedStock) במלאי" : "אזל מהמלאי")
+                            .font(.caption)
+                            .foregroundStyle(selectedStock > 0 ? Theme.success : Theme.danger)
+                    }
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(group.options.indices, id: \.self) { index in
+                            let option = group.options[index]
+                            Button {
+                                variantIndex = index
+                            } label: {
+                                Chip(text: option.title, selected: index == variantIndex)
+                                    .opacity(optionSoldOut(index) ? 0.45 : 1)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(optionSoldOut(index))
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                Text("כל אפשרות היא מוצר נפרד עם מחיר ומלאי משלו")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(16)
+            .cardContainer()
+        }
+    }
+
+    /// Only options that line up with an `items_stock` row can be purchased.
+    private func optionSoldOut(_ index: Int) -> Bool {
+        guard let detail else { return false }
+        if let stock = detail.stockCount(at: index) { return stock <= 0 }
+        return true
+    }
+
+    private func stockAvailable(_ detail: ItemDetail) -> Bool {
+        if let selectedStock { return selectedStock > 0 }
+        return detail.inStock
+    }
+
+    private func stockBadgeText(_ detail: ItemDetail) -> String {
+        guard stockAvailable(detail) else {
+            return detail.outOfStockMessage.nonEmpty ?? "אזל מהמלאי"
+        }
+        if let selectedStock { return "במלאי · \(selectedStock)" }
+        return "במלאי"
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(displayTitle)
@@ -273,7 +372,7 @@ struct ItemDetailView: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Stepper(value: $quantity, in: 1...20) {
+                Stepper(value: $quantity, in: 1...quantityUpperBound) {
                     Text("\(quantity)")
                         .font(.headline)
                         .frame(minWidth: 24)
@@ -288,13 +387,13 @@ struct ItemDetailView: View {
                     if isAdding {
                         ProgressView().tint(.white)
                     } else {
-                        Image(systemName: "cart.badge.plus")
+                        Image(systemName: isSelectionSoldOut ? "xmark.circle" : "cart.badge.plus")
                     }
-                    Text(isAdding ? "מוסיף…" : "הוסף לסל")
+                    Text(isAdding ? "מוסיף…" : (isSelectionSoldOut ? "אזל מהמלאי" : "הוסף לסל"))
                 }
             }
-            .buttonStyle(PrimaryButtonStyle(enabled: !isAdding))
-            .disabled(isAdding)
+            .buttonStyle(PrimaryButtonStyle(enabled: !isAddDisabled))
+            .disabled(isAddDisabled)
         }
         .padding(16)
         .cardContainer()
@@ -368,7 +467,10 @@ struct ItemDetailView: View {
         defer { isAdding = false }
 
         do {
-            if let request = try await app.addToCart(itemId: item.id, quantity: quantity) {
+            let amount = min(quantity, quantityUpperBound)
+            if let request = try await app.addToCart(itemId: item.id,
+                                                      quantity: amount,
+                                                      collectedId: selectedCollectedId) {
                 popup = request
             } else {
                 showToast("נוסף לסל")

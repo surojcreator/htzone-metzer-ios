@@ -193,8 +193,12 @@ struct ItemsView: View {
 struct ItemCard: View {
     let item: Item
 
+    private var subtitle: String? { item.subtitle.nonEmpty }
+
+    private var showsOptions: Bool { item.isCollected && item.optionCount > 1 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             RemoteImage(url: item.imageURL)
                 .frame(maxWidth: .infinity)
                 .frame(height: 132)
@@ -204,7 +208,22 @@ struct ItemCard: View {
                 .font(.footnote.weight(.semibold))
                 .multilineTextAlignment(.leading)
                 .lineLimit(2)
-                .frame(height: 36, alignment: .topLeading)
+                .frame(height: 34, alignment: .topLeading)
+
+            // Reserved line so cards with and without a distinct sub-title align.
+            Text(subtitle ?? " ")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .frame(height: 13, alignment: .topLeading)
+
+            HStack(spacing: 4) {
+                if showsOptions {
+                    StatusBadge(text: "\(item.optionCount) אפשרויות", color: Theme.gold)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(height: 24, alignment: .leading)
 
             Spacer(minLength: 0)
 
@@ -218,7 +237,7 @@ struct ItemCard: View {
             }
         }
         .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 232, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 248, alignment: .topLeading)
         .cardContainer()
     }
 }

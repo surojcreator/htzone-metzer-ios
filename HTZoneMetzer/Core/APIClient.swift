@@ -189,11 +189,19 @@ actor APIClient {
         try await call("getCart")
     }
 
-    func addToCart(itemId: String, quantity: Int) async throws -> JSONValue {
-        try await call("addToCart", data: [
+    func addToCart(itemId: String, quantity: Int, collectedId: String? = nil) async throws -> JSONValue {
+        var payload: [String: Any] = [
             "itemId": numeric(itemId),
             "quantity": quantity
-        ])
+        ]
+        // The official client sends `collectedIds` only for "collected"
+        // (multi-variant) products; each entry selects one purchasable row.
+        if let collectedId, !collectedId.isEmpty, collectedId != "0" {
+            payload["collectedIds"] = [
+                ["collectedId": numeric(collectedId), "quantity": quantity]
+            ]
+        }
+        return try await call("addToCart", data: payload)
     }
 
     func removeFromCart(itemKey: String) async throws -> JSONValue {

@@ -162,6 +162,10 @@ struct Item: Identifiable, Hashable {
     let textInsteadPrice: String
     let rating: Double
     let reviews: Int
+    /// The product exposes selectable variants (the API's `collected` flag).
+    let isCollected: Bool
+    /// Number of values in the widest variant dimension (0 when there are none).
+    let optionCount: Int
 
     init?(json: JSONValue, mediaServer: String) {
         guard let object = json.objectValue,
@@ -184,7 +188,30 @@ struct Item: Identifiable, Hashable {
         textInsteadPrice = object["text_instead_price"]?.stringValue ?? ""
         rating = object["review_avg"]?.doubleValue ?? object["avg_rating"]?.doubleValue ?? 0
         reviews = object["reviews"]?.intValue ?? 0
+        isCollected = (object["collected"]?.boolValue ?? false)
+            || !((object["collectedIds"]?.isNull) ?? true)
+        optionCount = Item.featureOptionCount(object["features"])
         imageURL = Item.makeURL(object["img"]?.stringValue, mediaServer: mediaServer)
+    }
+
+    /// `features` arrives as `{groupId: [valueId, ...]}` (or a keyed map); the
+    /// largest group is how many selectable options the card should advertise.
+    private static func featureOptionCount(_ value: JSONValue?) -> Int {
+        guard let value else { return 0 }
+        if let map = value.objectValue {
+            var best = 0
+            for entry in map.values {
+                if let array = entry.arrayValue {
+                    best = max(best, array.count)
+                } else if let object = entry.objectValue {
+                    best = max(best, object.count)
+                } else if let number = entry.intValue {
+                    best = max(best, number)
+                }
+            }
+            return best
+        }
+        return value.arrayValue?.count ?? 0
     }
 
     static func makeURL(_ raw: String?, mediaServer: String) -> URL? {
@@ -436,6 +463,38 @@ struct FeatureGroup: Identifiable, Hashable {
     let values: [String]
 }
 
+/// One selectable value of a variant dimension (for example a colour).
+struct VariantOption: Identifiable, Hashable {
+    let id: String
+    let title: String
+}
+
+/// A selectable variant dimension.
+///
+/// The API only guarantees one such dimension: the "collected" one used by
+/// `items_stock`. Every other feature group stays a plain specification.
+struct VariantGroup: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let options: [VariantOption]
+}
+
+/// One purchasable row of a collected product, as reported by `items_stock`.
+struct StockVariant: Identifiable, Hashable {
+    let id: String
+    let collectedId: String
+    let stock: Int
+    let price: Double?
+    let fullPrice: Double?
+}
+
+/// Intermediate parse result before a group is classified as spec or variant.
+private struct ParsedFeatureGroup {
+    let id: String
+    let title: String
+    let options: [VariantOption]
+}
+
 struct DeliveryOption: Identifiable, Hashable {
     let id: String
     let title: String
@@ -450,6 +509,11 @@ struct ItemDetail: Hashable {
     let contentHTML: String
     let images: [URL]
     let features: [FeatureGroup]
+    let variantGroups: [VariantGroup]
+    let stockVariants: [StockVariant]
+    let defaultCollectedId: String?
+    let isCollected: Bool
+    let productType: String
     let delivery: [DeliveryOption]
     let warranty: String
     let supplierId: String
@@ -478,7 +542,55 @@ struct ItemDetail: Hashable {
             .joined(separator: "<hr/>")
 
         images = ItemDetail.parseImages(object["mediaGroupsArr"], mediaServer: mediaServer)
-        features = ItemDetail.parseFeatures(object["extra_features"])
+
+        let collectedFlag = object["collected"]?.boolValue ?? false
+        let hasCollectedIds = !((object["collectedIds"]?.isNull) ?? true)
+        let collected = collectedFlag || hasCollectedIds
+        isCollected = collected
+        productType = object["product_type"]?.stringValue
+            ?? object["type_id"]?.stringValue
+            ?? ""
+
+        let priceObject = ItemDetail.priceObject(object["priceArr"])
+        let stocks = ItemDetail.parseStock(object["items_stock"])
+        stockVariants = stocks
+
+        // `collected_id` is the variant the server is currently pricing; "0"
+        // is the sentinel used by products that have no variant dimension.
+        var resolvedCollectedId: String?
+        if let explicit = priceObject?["collected_id"]?.stringValue?.nonEmpty,
+           explicit != "0" {
+            resolvedCollectedId = explicit
+        } else if let first = stocks.first, first.collectedId != "0" {
+            resolvedCollectedId = first.collectedId
+        }
+        defaultCollectedId = resolvedCollectedId
+
+        let parsedGroups = ItemDetail.parseFeatureGroups(extra: object["extra_features"],
+                                                         featureIds: object["features"])
+        let specs = parsedGroups.map { group in
+            FeatureGroup(id: group.id, title: group.title, values: group.options.map(\.title))
+        }
+
+        var variant: VariantGroup?
+        if collected, stocks.count > 1 {
+            let candidates = parsedGroups.filter { $0.options.count > 1 }
+            let aligned = candidates.filter { $0.options.count == stocks.count }
+            func isColour(_ group: ParsedFeatureGroup) -> Bool {
+                let title = group.title.lowercased()
+                return title.contains("צבע") || title.contains("color") || title.contains("colour")
+            }
+            let chosen = aligned.first(where: isColour)
+                ?? aligned.first
+                ?? candidates.first(where: isColour)
+                ?? candidates.max { $0.options.count < $1.options.count }
+            if let chosen {
+                variant = VariantGroup(id: chosen.id, title: chosen.title, options: chosen.options)
+            }
+        }
+        variantGroups = variant.map { [$0] } ?? []
+        features = specs.filter { $0.id != (variant?.id ?? "") }
+
         delivery = ItemDetail.parseDelivery(object["delivery_arr"])
         warranty = object["warranty"]?.stringValue ?? ""
         supplierId = object["supplier_id"]?.stringValue ?? ""
@@ -486,10 +598,47 @@ struct ItemDetail: Hashable {
         outOfStockMessage = object["out_of_stock_msg"]?.stringValue ?? ""
         itemURL = object["itemUrl"]?.stringValue.flatMap { URL(string: $0) }
 
-        let priceArr = object["priceArr"]
-        price = priceArr?["price"]?.doubleValue ?? object["price"]?.doubleValue
-        fullPrice = priceArr?["full_price"]?.doubleValue ?? object["full_price"]?.doubleValue
+        let selectedPriceObject = ItemDetail.priceObject(object["priceArr"],
+                                                         collectedId: resolvedCollectedId)
+        let pricedVariant = resolvedCollectedId.flatMap { id in
+            stocks.first { $0.collectedId == id }
+        }
+        price = pricedVariant?.price
+            ?? selectedPriceObject?["price"]?.doubleValue
+            ?? object["price"]?.doubleValue
+        fullPrice = pricedVariant?.fullPrice
+            ?? selectedPriceObject?["full_price"]?.doubleValue
+            ?? object["full_price"]?.doubleValue
     }
+
+    // MARK: - Variant helpers
+
+    /// Index the server is currently pricing the product at.
+    var defaultVariantIndex: Int {
+        guard let defaultCollectedId,
+              let index = stockVariants.firstIndex(where: { $0.collectedId == defaultCollectedId }) else {
+            return 0
+        }
+        return index
+    }
+
+    /// `collectedId` for an option index, aligned with `items_stock` order.
+    func collectedId(at index: Int) -> String? {
+        guard stockVariants.indices.contains(index) else { return nil }
+        return stockVariants[index].collectedId
+    }
+
+    func stockCount(at index: Int) -> Int? {
+        guard stockVariants.indices.contains(index) else { return nil }
+        return stockVariants[index].stock
+    }
+
+    func variantPrice(at index: Int) -> Double? {
+        guard stockVariants.indices.contains(index) else { return nil }
+        return stockVariants[index].price
+    }
+
+    var hasVariants: Bool { !variantGroups.isEmpty }
 
     private static func parseImages(_ value: JSONValue?, mediaServer: String) -> [URL] {
         var urls: [URL] = []
@@ -508,19 +657,116 @@ struct ItemDetail: Hashable {
         return urls
     }
 
-    private static func parseFeatures(_ value: JSONValue?) -> [FeatureGroup] {
-        guard let map = value?.objectValue else { return [] }
-        return map.keys.sorted(by: JSONCollections.numericOrder).compactMap { key in
-            guard let object = map[key]?.objectValue else { return nil }
-            let title = object["show_title"]?.stringValue?.nonEmpty
-                ?? object["title"]?.stringValue
+    /// `extra_features` carries the human labels; `features` carries the canonical
+    /// option order per group (`{featureId: [featureValueId, ...]}`).
+    private static func parseFeatureGroups(extra: JSONValue?,
+                                           featureIds: JSONValue?) -> [ParsedFeatureGroup] {
+        let featureMap = featureIds?.objectValue ?? [:]
+        guard let extraMap = extra?.objectValue else { return [] }
+
+        var groups: [ParsedFeatureGroup] = []
+        for key in extraMap.keys.sorted(by: JSONCollections.numericOrder) {
+            guard let entry = extraMap[key]?.objectValue else { continue }
+            let title = entry["show_title"]?.stringValue?.nonEmpty
+                ?? entry["title"]?.stringValue?.nonEmpty
                 ?? ""
-            let values = (object["values"]?.objectValue ?? [:]).values.compactMap {
-                $0["value"]?.stringValue?.nonEmpty
+            guard !title.isEmpty else { continue }
+            let groupId = entry["id"]?.stringValue?.nonEmpty ?? key
+
+            // Stable (id, label) pairs in declaration order.
+            var labelled: [(id: String, title: String)] = []
+            var seen = Set<String>()
+            let rawValues = entry["values"]
+            if let valueMap = rawValues?.objectValue {
+                for valueKey in valueMap.keys.sorted(by: JSONCollections.numericOrder) {
+                    guard let value = valueMap[valueKey]?.objectValue else { continue }
+                    ItemDetail.appendLabel(value, fallbackId: valueKey, into: &labelled, seen: &seen)
+                }
+            } else if let valueArray = rawValues?.arrayValue {
+                for (index, value) in valueArray.enumerated() {
+                    guard let object = value.objectValue else { continue }
+                    let fallback = object["feature_value_id"]?.stringValue
+                        ?? object["id"]?.stringValue
+                        ?? String(index)
+                    ItemDetail.appendLabel(object, fallbackId: fallback, into: &labelled, seen: &seen)
+                }
             }
-            guard !title.isEmpty, !values.isEmpty else { return nil }
-            return FeatureGroup(id: key, title: title, values: values)
+            guard !labelled.isEmpty else { continue }
+
+            var byId: [String: String] = [:]
+            for item in labelled { byId[item.id] = item.title }
+
+            // Respect the published order when it covers our labels; otherwise
+            // fall back to declaration order.
+            var optionIds: [String] = []
+            if let declared = featureMap[groupId]?.arrayValue {
+                for value in declared {
+                    guard let optionId = value.stringValue,
+                          byId[optionId] != nil,
+                          !optionIds.contains(optionId) else { continue }
+                    optionIds.append(optionId)
+                }
+            }
+            if optionIds.isEmpty {
+                optionIds = labelled.map { $0.id }
+            }
+
+            let options = optionIds.map {
+                VariantOption(id: $0, title: byId[$0] ?? $0)
+            }
+            groups.append(ParsedFeatureGroup(id: groupId, title: title, options: options))
         }
+        return groups
+    }
+
+    private static func appendLabel(_ value: [String: JSONValue],
+                                    fallbackId: String,
+                                    into labelled: inout [(id: String, title: String)],
+                                    seen: inout Set<String>) {
+        let label = value["value"]?.stringValue?.nonEmpty
+            ?? value["title"]?.stringValue?.nonEmpty
+            ?? value["name"]?.stringValue?.nonEmpty
+        guard let label else { return }
+        let optionId = value["feature_value_id"]?.stringValue?.nonEmpty ?? fallbackId
+        guard seen.insert(optionId).inserted else { return }
+        labelled.append((id: optionId, title: label))
+    }
+
+    /// `items_stock` is keyed by a numeric row id; the numeric key order matches
+    /// the order of the variant dimension's options.
+    private static func parseStock(_ value: JSONValue?) -> [StockVariant] {
+        JSONCollections.array(value).compactMap { entry in
+            guard let object = entry.objectValue else { return nil }
+            let collectedId = object["item_collected_id"]?.stringValue?.nonEmpty
+                ?? object["collected_id"]?.stringValue?.nonEmpty
+            guard let collectedId else { return nil }
+            let stock = object["total_active_items"]?.intValue
+                ?? object["stock"]?.intValue
+                ?? 0
+            let id = object["item_collected_id"]?.stringValue
+                ?? object["id"]?.stringValue
+                ?? collectedId
+            return StockVariant(
+                id: id,
+                collectedId: collectedId,
+                stock: stock,
+                price: object["price"]?.doubleValue
+                    ?? object["sale_price"]?.doubleValue
+                    ?? object["final_price"]?.doubleValue,
+                fullPrice: object["full_price"]?.doubleValue
+            )
+        }
+    }
+
+    private static func priceObject(_ value: JSONValue?,
+                                    collectedId: String? = nil) -> [String: JSONValue]? {
+        if let object = value?.objectValue { return object }
+        let rows = JSONCollections.array(value).compactMap { $0.objectValue }
+        if let collectedId,
+           let match = rows.first(where: { $0["collected_id"]?.stringValue == collectedId }) {
+            return match
+        }
+        return rows.first
     }
 
     private static func parseDelivery(_ value: JSONValue?) -> [DeliveryOption] {

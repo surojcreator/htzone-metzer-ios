@@ -197,8 +197,8 @@ final class AppState: ObservableObject {
         return CartSummary(json: data, mediaServer: mediaServer)
     }
 
-    func addToCart(itemId: String, quantity: Int) async throws -> PopupRequest? {
-        let data = try await api.addToCart(itemId: itemId, quantity: quantity)
+    func addToCart(itemId: String, quantity: Int, collectedId: String? = nil) async throws -> PopupRequest? {
+        let data = try await api.addToCart(itemId: itemId, quantity: quantity, collectedId: collectedId)
         await refreshCart()
         if let popupValue = data["popupObject"] ?? data["popup"],
            let popup = PopupRequest(json: popupValue) {

@@ -17,6 +17,10 @@ Android app uses. It is an independent front end for an account you control.
   even when `total_items` is missing; “load more” button as a fallback
 - Full item detail from `getItem { itemId }`: image gallery, brief, spec groups,
   delivery options, stock/warranty, and a link to the web page
+- Variant products (the API's `collected` flag) get a colour/model picker on the
+  detail screen, per-variant stock and price, and a `collectedIds` entry on add to
+  cart; cards show the distinct `sub_title` and the number of options so products
+  that share a title stay distinguishable
 - Home banner carousel from `home_page_bannersArr` (`tv_banners` + `elipses`)
 - Search with debounce, recent searches, result grid, and category matches
   (the server caps search at 8 results)
@@ -101,7 +105,7 @@ CommonCrypto + CryptoKit.
 | Comments | `getItemComments` | `itemId` |
 | Related | `getItemMoreProducts` | `itemId` |
 | Cart | `getCart` | `{}` |
-| Add to cart | `addToCart` | `itemId`, `quantity` |
+| Add to cart | `addToCart` | `itemId`, `quantity`, and `collectedIds: [{collectedId, quantity}]` for collected products |
 | Remove from cart | `removeFromCart` | `itemKey` |
 | Popup validation | `popup_validate` | `response_key` + popup inputs |
 | Orders | `getUserOrders` | `{}` |
@@ -132,6 +136,9 @@ values and does not attempt to encode anything special.
   `popup_validate`, but the exact validation payload is inferred.
 - Product detail falls back to the list payload if `getItem` rejects an item
   (`234` product unavailable).
+- Variant mapping relies on `items_stock` row order matching the option order in
+  `features`; when a stock row carries no price the product's `priceArr` price is
+  shown for that option.
 - Filters and brand shortcuts are not exposed: `getCategory.filters` and
   `dynamic_fieldsArr` come back empty and `getItems.brands` is `null` for the
   catalog branches tested.
