@@ -796,7 +796,13 @@ struct ItemDetail: Hashable {
             }
 
             let options = optionIds.map {
-                VariantOption(id: $0, title: byId[$0] ?? $0)
+                VariantOption(id: $0,
+                              title: byId[$0] ?? $0,
+                              collectedId: nil,
+                              stock: nil,
+                              maxPurchase: nil,
+                              price: nil,
+                              fullPrice: nil)
             }
             groups.append(ParsedFeatureGroup(id: groupId, title: title, options: options))
         }
