@@ -12,9 +12,10 @@ struct ItemsView: View {
     @EnvironmentObject private var app: AppState
     @State private var items: [Item] = []
     @State private var page = 1
-    @State private var total = 0
+    @State private var total: Int?
     @State private var sort = 1
     @State private var isLoading = false
+    @State private var hasMore = true
     @State private var error: String?
     @State private var didLoad = false
 
@@ -24,7 +25,7 @@ struct ItemsView: View {
     ]
 
     private var canLoadMore: Bool {
-        !isLoading && items.count < total
+        hasMore && !isLoading
     }
 
     var body: some View {
@@ -56,6 +57,27 @@ struct ItemsView: View {
                     ProgressView()
                         .tint(.white)
                         .padding()
+                }
+
+                if !items.isEmpty, hasMore, !isLoading {
+                    Button {
+                        Task { await load(reset: false) }
+                    } label: {
+                        Text("טען עוד")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if let total, total > 0, !items.isEmpty {
+                    Text("מציג \(items.count) מתוך \(total)")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.top, 2)
                 }
 
                 if items.isEmpty, !isLoading, error == nil {
@@ -114,8 +136,17 @@ struct ItemsView: View {
                 let existing = Set(items.map(\.id))
                 items += result.items.filter { !existing.contains($0.id) }
             }
-            total = result.total
+            total = result.total ?? total
             page = nextPage + 1
+
+            if let listTotal = result.total {
+                hasMore = items.count < listTotal
+            } else {
+                hasMore = result.rawCount > 0 && result.rawCount >= result.pageSize
+            }
+            if result.rawCount == 0 || nextPage >= 60 {
+                hasMore = false
+            }
         } catch {
             self.error = app.message(for: error)
         }

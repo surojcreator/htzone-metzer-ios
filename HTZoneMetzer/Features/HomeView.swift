@@ -19,6 +19,9 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 greeting
+                if !app.banners.isEmpty {
+                    bannerCarousel
+                }
                 searchLink
 
                 if !app.categories.isEmpty {
@@ -92,6 +95,57 @@ struct HomeView: View {
                     .prefix(12))
             }
         }
+    }
+
+    private var bannerCarousel: some View {
+        TabView {
+            ForEach(app.banners) { banner in
+                bannerCard(banner)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .automatic))
+        .frame(height: 190)
+    }
+
+    @ViewBuilder
+    private func bannerCard(_ banner: Banner) -> some View {
+        if let categoryId = banner.categoryId,
+           let node = app.categoryNode(id: categoryId) {
+            NavigationLink {
+                CategoryDetailView(node: node)
+            } label: {
+                bannerContent(banner)
+            }
+            .buttonStyle(.plain)
+        } else if let url = banner.webURL {
+            Link(destination: url) {
+                bannerContent(banner)
+            }
+        } else {
+            bannerContent(banner)
+        }
+    }
+
+    private func bannerContent(_ banner: Banner) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            RemoteImage(url: banner.imageURL)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.78)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+            if let title = banner.title.nonEmpty {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .padding(14)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 190)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var greeting: some View {

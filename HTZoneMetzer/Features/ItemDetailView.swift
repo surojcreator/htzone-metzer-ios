@@ -18,18 +18,34 @@ struct ItemDetailView: View {
     @State private var error: String?
     @State private var toast: String?
     @State private var didLoad = false
+    @State private var detail: ItemDetail?
+    @State private var galleryIndex = 0
+
+    private var displayTitle: String {
+        detail?.title.nonEmpty ?? item.title
+    }
+
+    private var displaySubtitle: String? {
+        detail?.subtitle.nonEmpty ?? item.subtitle.nonEmpty
+    }
+
+    private var displayPrice: Double? {
+        detail?.price ?? item.price
+    }
+
+    private var displayFullPrice: Double? {
+        detail?.fullPrice ?? item.fullPrice
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                RemoteImage(url: item.imageURL)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 280)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                hero
 
                 header
                 priceBox
                 addBox
+                detailSections
 
                 if let error {
                     ErrorBanner(message: error)
@@ -68,18 +84,141 @@ struct ItemDetailView: View {
         .task {
             guard !didLoad else { return }
             didLoad = true
+            detail = try? await app.itemDetail(id: item.id)
             comments = (try? await app.comments(itemId: item.id)) ?? []
             related = (try? await app.related(itemId: item.id)) ?? []
         }
     }
 
+    @ViewBuilder
+    private var hero: some View {
+        if let detail, !detail.images.isEmpty {
+            TabView(selection: $galleryIndex) {
+                ForEach(detail.images.indices, id: \.self) { index in
+                    RemoteImage(url: detail.images[index])
+                        .tag(index)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .automatic))
+            .frame(height: 300)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        } else {
+            RemoteImage(url: item.imageURL)
+                .frame(maxWidth: .infinity)
+                .frame(height: 280)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private var detailSections: some View {
+        if let detail {
+            if let brief = detail.brief.nonEmpty {
+                Text(brief)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
+                    .cardContainer()
+            }
+
+            HStack(spacing: 8) {
+                StatusBadge(
+                    text: detail.inStock ? "במלאי" : (detail.outOfStockMessage.nonEmpty ?? "אזל מהמלאי"),
+                    color: detail.inStock ? Theme.success : Theme.danger
+                )
+                if let warranty = detail.warranty.nonEmpty {
+                    StatusBadge(text: warranty, color: Theme.accent)
+                }
+            }
+
+            if !detail.features.isEmpty {
+                featuresSection(detail)
+            }
+
+            if !detail.delivery.isEmpty {
+                deliverySection(detail)
+            }
+
+            if !detail.contentHTML.isEmpty {
+                NavigationLink {
+                    HTMLView(html: detail.contentHTML)
+                        .background(Theme.nav.ignoresSafeArea())
+                        .navigationTitle("מידע נוסף")
+                        .navigationBarTitleDisplayMode(.inline)
+                } label: {
+                    infoRow(icon: "doc.text", title: "מידע נוסף")
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let url = detail.itemURL {
+                Link(destination: url) {
+                    infoRow(icon: "safari", title: "פתח באתר")
+                }
+            }
+        }
+    }
+
+    private func featuresSection(_ detail: ItemDetail) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "מפרט")
+            ForEach(detail.features) { group in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(group.values.joined(separator: " · "))
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .cardContainer()
+            }
+        }
+    }
+
+    private func deliverySection(_ detail: ItemDetail) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "אספקה")
+            ForEach(detail.delivery) { option in
+                HStack(spacing: 10) {
+                    Text(option.title)
+                        .font(.footnote)
+                        .lineLimit(2)
+                    Spacer()
+                    Text(Format.price(option.price) ?? "חינם")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.gold)
+                }
+                .padding(12)
+                .cardContainer()
+            }
+        }
+    }
+
+    private func infoRow(icon: String, title: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(Theme.accent)
+            Text(title)
+                .font(.subheadline)
+            Spacer()
+            Image(systemName: "chevron.left")
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(14)
+        .cardContainer()
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(item.title)
+            Text(displayTitle)
                 .font(.title3.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let subtitle = item.subtitle.nonEmpty {
+            if let subtitle = displaySubtitle {
                 Text(subtitle)
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
@@ -114,7 +253,7 @@ struct ItemDetailView: View {
                     .font(.headline)
                     .foregroundStyle(Theme.gold)
             } else {
-                PriceView(price: item.price, fullPrice: item.fullPrice, isFrom: item.isPriceFrom)
+                PriceView(price: displayPrice, fullPrice: displayFullPrice, isFrom: item.isPriceFrom)
             }
             Spacer()
             if item.reviews > 0 {

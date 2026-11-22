@@ -108,51 +108,208 @@ struct CategoryCard: View {
 struct CategoryDetailView: View {
     let node: CategoryNode
 
+    @EnvironmentObject private var app: AppState
+    @State private var info: CategoryInfo?
+    @State private var loadError: String?
+    @State private var didLoad = false
+
+    private var title: String {
+        if let info, let value = info.title.nonEmpty { return value }
+        return node.title
+    }
+
+    private var effectiveChildren: [CategoryNode] {
+        if let info, !info.children.isEmpty {
+            return info.children.filter { $0.id != "0" }
+        }
+        return node.children.filter { $0.id != "0" }
+    }
+
+    var body: some View {
+        Group {
+            if let info {
+                if effectiveChildren.isEmpty {
+                    ItemsView(categoryId: info.id.isEmpty ? node.id : info.id, title: title)
+                } else {
+                    CategoryLanding(node: node, info: info, children: effectiveChildren, title: title)
+                }
+            } else if let loadError {
+                VStack(spacing: 12) {
+                    ErrorBanner(message: loadError) { Task { await load() } }
+                    if effectiveChildren.isEmpty {
+                        ItemsView(categoryId: node.id, title: node.title)
+                    } else {
+                        CategoryLanding(
+                            node: node,
+                            info: CategoryInfo(id: node.id, title: node.title,
+                                               children: effectiveChildren, total: nil, promos: []),
+                            children: effectiveChildren,
+                            title: node.title
+                        )
+                    }
+                }
+                .padding()
+            } else {
+                LoadingView(text: "טוען קטגוריה…")
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard !didLoad else { return }
+            didLoad = true
+            await load()
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        do {
+            info = try await app.categoryInfo(id: node.id)
+            loadError = nil
+        } catch {
+            loadError = app.message(for: error)
+        }
+    }
+}
+
+struct CategoryLanding: View {
+    let node: CategoryNode
+    let info: CategoryInfo
+    let children: [CategoryNode]
+    let title: String
+
     private let columns = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
     ]
 
     var body: some View {
-        Group {
-            if node.children.isEmpty {
-                ItemsView(categoryId: node.id, title: node.title)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        NavigationLink {
-                            ItemsView(categoryId: node.id, title: "כל \(node.title)")
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "square.grid.2x2.fill")
-                                    .foregroundStyle(Theme.accent)
-                                Text("כל המוצרים ב\(node.title)")
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer()
-                                Image(systemName: "chevron.left")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                NavigationLink {
+                    ItemsView(categoryId: info.id.isEmpty ? node.id : info.id, title: "כל \(title)")
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "square.grid.2x2.fill")
+                            .foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("כל המוצרים ב\(title)")
+                                .font(.subheadline.weight(.semibold))
+                            if let total = info.total, total > 0 {
+                                Text("\(total) מוצרים")
+                                    .font(.caption2)
                                     .foregroundStyle(Theme.textSecondary)
                             }
-                            .padding(14)
-                            .cardContainer()
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.left")
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(14)
+                    .cardContainer()
+                }
+                .buttonStyle(.plain)
+
+                if !info.promos.isEmpty {
+                    promosSection
+                }
+
+                SectionHeader(title: "תתי־קטגוריות")
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(children) { child in
+                        NavigationLink {
+                            CategoryDetailView(node: child)
+                        } label: {
+                            CategoryCard(node: child)
                         }
                         .buttonStyle(.plain)
+                    }
+                }
 
-                        LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(node.children.filter { $0.id != "0" }) { child in
+                ItemsPreview(categoryId: info.id.isEmpty ? node.id : info.id, title: title)
+            }
+            .padding()
+        }
+        .background(Theme.background.ignoresSafeArea())
+    }
+
+    private var promosSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "הטבות")
+            ForEach(info.promos) { promo in
+                NavigationLink {
+                    SearchView(initialQuery: promo.title)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(Theme.gold)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(promo.title)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(2)
+                            if let subtitle = promo.subtitle.nonEmpty {
+                                Text(subtitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.left")
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(12)
+                    .cardContainer()
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+struct ItemsPreview: View {
+    let categoryId: String
+    let title: String
+
+    @EnvironmentObject private var app: AppState
+    @State private var items: [Item] = []
+    @State private var didLoad = false
+
+    var body: some View {
+        Group {
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionHeader(title: "מוצרים")
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(Array(items.prefix(8))) { item in
                                 NavigationLink {
-                                    CategoryDetailView(node: child)
+                                    ItemDetailView(item: item)
                                 } label: {
-                                    CategoryCard(node: child)
+                                    ItemCard(item: item)
+                                        .frame(width: 160)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
+                        .padding(.horizontal, 1)
                     }
-                    .padding()
+                    NavigationLink {
+                        ItemsView(categoryId: categoryId, title: title)
+                    } label: {
+                        Text("לכל המוצרים")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .background(Theme.background.ignoresSafeArea())
-                .navigationTitle(node.title)
-                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .task {
+            guard !didLoad else { return }
+            didLoad = true
+            if let page = try? await app.fetchItems(categoryId: categoryId, page: 1, sortById: 1) {
+                items = page.items
             }
         }
     }

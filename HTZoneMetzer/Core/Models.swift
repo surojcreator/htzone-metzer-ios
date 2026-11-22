@@ -125,15 +125,25 @@ struct CategoryNode: Identifiable, Hashable {
     }
 
     private static func childValues(of object: [String: JSONValue]) -> [JSONValue] {
+        var collected: [JSONValue] = []
+        var seen = Set<String>()
         for key in ["sub_categories", "categories"] {
-            if let value = object[key] {
-                if let array = value.arrayValue, !array.isEmpty { return array }
-                if let map = value.objectValue, !map.isEmpty {
-                    return map.keys.sorted(by: JSONCollections.numericOrder).compactMap { map[$0] }
-                }
+            guard let value = object[key] else { continue }
+            let values: [JSONValue]
+            if let array = value.arrayValue {
+                values = array
+            } else if let map = value.objectValue {
+                values = map.keys.sorted(by: JSONCollections.numericOrder).compactMap { map[$0] }
+            } else {
+                values = []
+            }
+            for entry in values {
+                let id = entry["id"]?.stringValue ?? UUID().uuidString
+                guard seen.insert(id).inserted else { continue }
+                collected.append(entry)
             }
         }
-        return []
+        return collected
     }
 }
 
@@ -416,6 +426,226 @@ struct PopupRequest: Identifiable, Hashable {
         self.responseKey = responseKey
         inputs = JSONCollections.array(object["inputs"]).compactMap { PopupInput(json: $0) }
     }
+}
+
+// MARK: - Full item detail
+
+struct FeatureGroup: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let values: [String]
+}
+
+struct DeliveryOption: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let price: Double
+}
+
+struct ItemDetail: Hashable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let brief: String
+    let contentHTML: String
+    let images: [URL]
+    let features: [FeatureGroup]
+    let delivery: [DeliveryOption]
+    let warranty: String
+    let supplierId: String
+    let inStock: Bool
+    let outOfStockMessage: String
+    let itemURL: URL?
+    let price: Double?
+    let fullPrice: Double?
+
+    init?(json: JSONValue, mediaServer: String) {
+        guard let object = json.objectValue,
+              let id = object["id"]?.stringValue else { return nil }
+        self.id = id
+        title = object["title_override"]?.stringValue?.nonEmpty
+            ?? object["title"]?.stringValue
+            ?? ""
+        subtitle = object["sub_title_override"]?.stringValue?.nonEmpty
+            ?? object["sub_title"]?.stringValue
+            ?? ""
+        brief = object["brief"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let content = object["content"]?.stringValue ?? ""
+        let content1 = object["content1"]?.stringValue ?? ""
+        contentHTML = [content, content1]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "<hr/>")
+
+        images = ItemDetail.parseImages(object["mediaGroupsArr"], mediaServer: mediaServer)
+        features = ItemDetail.parseFeatures(object["extra_features"])
+        delivery = ItemDetail.parseDelivery(object["delivery_arr"])
+        warranty = object["warranty"]?.stringValue ?? ""
+        supplierId = object["supplier_id"]?.stringValue ?? ""
+        inStock = !(object["stock_empty"]?.boolValue ?? false)
+        outOfStockMessage = object["out_of_stock_msg"]?.stringValue ?? ""
+        itemURL = object["itemUrl"]?.stringValue.flatMap { URL(string: $0) }
+
+        let priceArr = object["priceArr"]
+        price = priceArr?["price"]?.doubleValue ?? object["price"]?.doubleValue
+        fullPrice = priceArr?["full_price"]?.doubleValue ?? object["full_price"]?.doubleValue
+    }
+
+    private static func parseImages(_ value: JSONValue?, mediaServer: String) -> [URL] {
+        var urls: [URL] = []
+        var main: URL?
+        for entry in JSONCollections.array(value) {
+            guard let object = entry.objectValue else { continue }
+            let raw = object["path"]?.stringValue ?? object["img"]?.stringValue
+            guard let url = Item.makeURL(raw, mediaServer: mediaServer) else { continue }
+            if object["main_picture"]?.stringValue == "1" {
+                main = url
+            } else {
+                urls.append(url)
+            }
+        }
+        if let main { urls.insert(main, at: 0) }
+        return urls
+    }
+
+    private static func parseFeatures(_ value: JSONValue?) -> [FeatureGroup] {
+        guard let map = value?.objectValue else { return [] }
+        return map.keys.sorted(by: JSONCollections.numericOrder).compactMap { key in
+            guard let object = map[key]?.objectValue else { return nil }
+            let title = object["show_title"]?.stringValue?.nonEmpty
+                ?? object["title"]?.stringValue
+                ?? ""
+            let values = (object["values"]?.objectValue ?? [:]).values.compactMap {
+                $0["value"]?.stringValue?.nonEmpty
+            }
+            guard !title.isEmpty, !values.isEmpty else { return nil }
+            return FeatureGroup(id: key, title: title, values: values)
+        }
+    }
+
+    private static func parseDelivery(_ value: JSONValue?) -> [DeliveryOption] {
+        guard let items = value?["delivery_items"]?.objectValue else { return [] }
+        return items.keys.sorted(by: JSONCollections.numericOrder).compactMap { key in
+            guard let object = items[key]?.objectValue,
+                  let title = object["title"]?.stringValue?.nonEmpty else { return nil }
+            return DeliveryOption(id: key, title: title, price: object["sum"]?.doubleValue ?? 0)
+        }
+    }
+}
+
+// MARK: - Category metadata
+
+struct PromoItem: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let brand: String
+
+    static func list(from value: JSONValue?) -> [PromoItem] {
+        JSONCollections.array(value).compactMap { entry in
+            guard let object = entry.objectValue,
+                  let title = object["title"]?.stringValue?.nonEmpty else { return nil }
+            let brand = object["brand_title"]?.stringValue ?? ""
+            return PromoItem(
+                id: object["id"]?.stringValue ?? "\(brand)-\(title)",
+                title: title,
+                subtitle: object["sub_title"]?.stringValue ?? "",
+                brand: brand
+            )
+        }
+    }
+}
+
+struct CategoryInfo: Hashable {
+    let id: String
+    let title: String
+    let children: [CategoryNode]
+    let total: Int?
+    let promos: [PromoItem]
+
+    init(id: String, title: String, children: [CategoryNode], total: Int?, promos: [PromoItem]) {
+        self.id = id
+        self.title = title
+        self.children = children
+        self.total = total
+        self.promos = promos
+    }
+
+    init?(json: JSONValue) {
+        guard let object = json.objectValue else { return nil }
+        id = object["id"]?.stringValue ?? ""
+        title = object["title"]?.stringValue ?? ""
+        children = JSONCollections.array(object["connected_categories"]).compactMap {
+            CategoryNode.node(from: $0, level: 2)
+        }
+        total = object["total_items"]?.intValue
+        promos = PromoItem.list(from: object["connected_items"])
+    }
+}
+
+// MARK: - Home banners
+
+struct Banner: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let imageURL: URL?
+    let categoryId: String?
+    let webURL: URL?
+
+    static func list(from declaration: JSONValue?, mediaServer: String) -> [Banner] {
+        guard let host = declaration?["home_page_bannersArr"] else { return [] }
+        var output: [Banner] = []
+
+        for entry in JSONCollections.array(host["tv_banners"]) {
+            guard let object = entry.objectValue else { continue }
+            let id = object["id"]?.stringValue ?? UUID().uuidString
+            let title = object["banner_alt"]?.stringValue?.nonEmpty
+                ?? object["name"]?.stringValue
+                ?? ""
+            let raw = object["mobile_img"]?.stringValue?.nonEmpty
+                ?? object["banner_img"]?.stringValue
+            let web = object["href"]?.stringValue.flatMap { $0.hasPrefix("http") ? URL(string: $0) : nil }
+            output.append(Banner(
+                id: "tv-\(id)",
+                title: title,
+                imageURL: Item.makeURL(raw, mediaServer: mediaServer),
+                categoryId: object["category_id"]?.stringValue,
+                webURL: web
+            ))
+        }
+
+        for entry in JSONCollections.array(host["elipses"]) {
+            guard let object = entry.objectValue else { continue }
+            let id = object["id"]?.stringValue ?? UUID().uuidString
+            let raw = object["mobile_img"]?.stringValue?.nonEmpty
+                ?? object["image"]?.stringValue
+            output.append(Banner(
+                id: "el-\(id)",
+                title: object["text"]?.stringValue ?? "",
+                imageURL: Item.makeURL(raw, mediaServer: mediaServer),
+                categoryId: object["category_id"]?.stringValue ?? categoryId(from: object["href"]?.stringValue),
+                webURL: nil
+            ))
+        }
+        return output.filter { $0.imageURL != nil }
+    }
+
+    private static func categoryId(from href: String?) -> String? {
+        guard let href else { return nil }
+        for part in href.split(separator: "/").reversed() where part.allSatisfy({ $0.isNumber }) {
+            return String(part)
+        }
+        return nil
+    }
+}
+
+// MARK: - Paged items
+
+struct ItemsPage {
+    let items: [Item]
+    let total: Int?
+    let rawCount: Int
+    let pageSize: Int
 }
 
 // MARK: - Formatting

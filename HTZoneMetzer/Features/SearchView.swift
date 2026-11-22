@@ -12,6 +12,7 @@ struct SearchView: View {
 
     @State private var query = ""
     @State private var results: [Item] = []
+    @State private var categoryResults: [CategoryNode] = []
     @State private var isSearching = false
     @State private var error: String?
     @State private var recent: [String] = []
@@ -58,6 +59,25 @@ struct SearchView: View {
                     )
                 }
 
+                if !categoryResults.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader(title: "קטגוריות")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(categoryResults) { category in
+                                    NavigationLink {
+                                        CategoryDetailView(node: category)
+                                    } label: {
+                                        Chip(text: category.title)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 1)
+                        }
+                    }
+                }
+
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(results) { item in
                         NavigationLink {
@@ -99,6 +119,7 @@ struct SearchView: View {
                 Button {
                     query = ""
                     results = []
+                    categoryResults = []
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(Theme.textSecondary)
@@ -114,6 +135,7 @@ struct SearchView: View {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard term.count >= 2 else {
             results = []
+            categoryResults = []
             error = nil
             return
         }
@@ -126,7 +148,9 @@ struct SearchView: View {
         defer { isSearching = false }
 
         do {
-            results = try await app.search(term)
+            let result = try await app.searchResults(term)
+            results = result.items
+            categoryResults = result.categories
             if !results.isEmpty {
                 remember(term)
             }

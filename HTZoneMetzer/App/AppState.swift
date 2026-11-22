@@ -18,6 +18,7 @@ final class AppState: ObservableObject {
     @Published private(set) var profile: Profile?
     @Published private(set) var tenant: Tenant = .metzer
     @Published private(set) var categories: [CategoryNode] = []
+    @Published private(set) var banners: [Banner] = []
     @Published private(set) var cartCount: Int = 0
     @Published private(set) var isBusy = false
     @Published var errorMessage: String?
@@ -75,11 +76,12 @@ final class AppState: ObservableObject {
 
     private func applyDeclaration(_ value: JSONValue) {
         declaration = value
-        let forest = CategoryNode.forest(from: value)
-        if !forest.isEmpty { categories = forest }
         if let server = value["media_server"]?.stringValue?.nonEmpty {
             mediaServer = server
         }
+        banners = Banner.list(from: value, mediaServer: mediaServer)
+        let forest = CategoryNode.forest(from: value)
+        if !forest.isEmpty { categories = forest }
     }
 
     // MARK: - Auth
@@ -133,14 +135,43 @@ final class AppState: ObservableObject {
 
     // MARK: - Catalog
 
-    func fetchItems(categoryId: String, page: Int, sortById: Int) async throws -> (items: [Item], total: Int) {
+    func fetchItems(categoryId: String, page: Int, sortById: Int) async throws -> ItemsPage {
         let data = try await api.items(categoryId: categoryId, page: page, sortById: sortById)
         let payload = data[categoryId] ?? data.objectValue?.values.first ?? .null
         let items = JSONCollections.array(payload["itemsArr"]).compactMap {
             Item(json: $0, mediaServer: mediaServer)
         }
-        let total = payload["total_items"]?.intValue ?? items.count
-        return (items, total)
+        let total = payload["total_items"]?.intValue
+        let from = payload["from"]?.intValue
+        let to = payload["to"]?.intValue
+        let pageSize: Int
+        if let from, let to, to > from {
+            pageSize = to - from
+        } else {
+            pageSize = 100
+        }
+        return ItemsPage(items: items, total: total, rawCount: items.count, pageSize: pageSize)
+    }
+
+    func categoryInfo(id: String) async throws -> CategoryInfo? {
+        let data = try await api.category(id: id)
+        return CategoryInfo(json: data)
+    }
+
+    func itemDetail(id: String) async throws -> ItemDetail? {
+        let data = try await api.item(itemId: id)
+        return ItemDetail(json: data, mediaServer: mediaServer)
+    }
+
+    func categoryNode(id: String) -> CategoryNode? {
+        func search(_ nodes: [CategoryNode]) -> CategoryNode? {
+            for node in nodes {
+                if node.id == id { return node }
+                if let found = search(node.children) { return found }
+            }
+            return nil
+        }
+        return search(categories)
     }
 
     func search(_ query: String) async throws -> [Item] {
@@ -148,6 +179,17 @@ final class AppState: ObservableObject {
         return JSONCollections.array(data["res"]).compactMap {
             Item(json: $0, mediaServer: mediaServer)
         }
+    }
+
+    func searchResults(_ query: String) async throws -> (items: [Item], categories: [CategoryNode]) {
+        let data = try await api.search(query)
+        let items = JSONCollections.array(data["res"]).compactMap {
+            Item(json: $0, mediaServer: mediaServer)
+        }
+        let categories = JSONCollections.array(data["categories"]).compactMap {
+            CategoryNode.node(from: $0, level: 2)
+        }
+        return (items, categories)
     }
 
     func cart() async throws -> CartSummary? {

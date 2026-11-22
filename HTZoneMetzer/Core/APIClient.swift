@@ -179,6 +179,10 @@ actor APIClient {
         try await call("getItemMoreProducts", data: ["itemId": numeric(itemId)])
     }
 
+    func item(itemId: String) async throws -> JSONValue {
+        try await call("getItem", data: ["itemId": numeric(itemId)])
+    }
+
     // MARK: - Cart
 
     func cart() async throws -> JSONValue {
