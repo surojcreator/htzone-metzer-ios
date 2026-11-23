@@ -174,15 +174,6 @@ extension JSONValue {
             if let value = decodeFoundation(repaired) { return value }
         }
         if let value = decodeFoundation(data) { return value }
-        // Some rows are stored as Windows-1255; re-encode before giving up.
-        if let text = String(data: data, encoding: .windowsCP1255),
-           let utf8 = text.data(using: .utf8), utf8 != data {
-            if let value = decodeStrict(utf8) { return value }
-            if let repaired = sanitizedJSON(utf8) {
-                if let value = decodeStrict(repaired) { return value }
-                if let value = decodeFoundation(repaired) { return value }
-            }
-        }
         return nil
     }
 
