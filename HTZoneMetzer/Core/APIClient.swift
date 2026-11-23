@@ -61,7 +61,16 @@ actor APIClient {
         tenant = newTenant
     }
 
-    func call(_ method: String, data: [String: Any] = [:]) async throws -> JSONValue {
+    private static let retryableOnDecodeFailure: Set<String> = [
+        "generalDeclaration", "getCategory", "getItems", "getItem", "searchQuery",
+        "getPopularSearches", "getContentPage", "getItemComments", "getItemMoreProducts",
+        "getCart", "getUserWallet", "getUserCards", "getUserOrders", "getUserOrder",
+        "getUserFavorites", "checkProState", "getCompanies", "getCities",
+        "getChitaboxList", "getBoxitAreas", "getBoxitCities", "getBoxitLockers",
+        "getStreets", "getHostUrl"
+    ]
+
+    func call(_ method: String, data: [String: Any] = [:], attempt: Int = 1) async throws -> JSONValue {
         guard let url = URL(string: tenant.baseURL.absoluteString + method + "/") else {
             throw APIError(code: nil, message: "כתובת לא תקינה")
         }
@@ -91,11 +100,20 @@ actor APIClient {
         }
 
         guard let root = JSONValue.decodeResponse(raw) else {
+            let canRetry = attempt < 2 && APIClient.retryableOnDecodeFailure.contains(method)
             if raw.isEmpty {
+                if canRetry {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    return try await call(method, data: data, attempt: attempt + 1)
+                }
                 throw APIError(code: nil, message: "השרת החזיר תגובה ריקה. נסה שוב.")
             }
             if JSONValue.responseLooksLikeHTML(raw) {
                 throw APIError(code: nil, message: "השרת החזיר דף חסימה. נסה שוב בעוד רגע.")
+            }
+            if canRetry {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                return try await call(method, data: data, attempt: attempt + 1)
             }
             throw APIError(code: nil, message: "לא ניתן לקרוא את תגובת השרת")
         }
@@ -184,8 +202,13 @@ actor APIClient {
         try await call("getItemMoreProducts", data: ["itemId": numeric(itemId)])
     }
 
-    func item(itemId: String) async throws -> JSONValue {
-        try await call("getItem", data: ["itemId": numeric(itemId)])
+    func item(itemId: String, itemType: String = "1") async throws -> JSONValue {
+        // The official client always sends both; some products answer with a
+        // redirect or an empty payload when `itemType` is missing.
+        try await call("getItem", data: [
+            "itemId": numeric(itemId),
+            "itemType": numeric(itemType)
+        ])
     }
 
     // MARK: - Favourites / public reference data

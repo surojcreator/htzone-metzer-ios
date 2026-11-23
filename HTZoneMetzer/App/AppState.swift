@@ -19,6 +19,8 @@ final class AppState: ObservableObject {
     @Published private(set) var tenant: Tenant = .metzer
     @Published private(set) var categories: [CategoryNode] = []
     @Published private(set) var banners: [Banner] = []
+    @Published private(set) var ellipses: [EllipseItem] = []
+    @Published private(set) var categoryImages: [String: URL] = [:]
     @Published private(set) var cartCount: Int = 0
     @Published private(set) var isBusy = false
     @Published var errorMessage: String?
@@ -81,6 +83,16 @@ final class AppState: ObservableObject {
             mediaServer = server
         }
         banners = Banner.list(from: value, mediaServer: mediaServer)
+        ellipses = EllipseItem.list(from: value, mediaServer: mediaServer)
+        var images: [String: URL] = [:]
+        if let map = value["categoriesImages"]?.objectValue {
+            for (key, entry) in map {
+                if let url = Item.makeURL(entry.stringValue, mediaServer: mediaServer) {
+                    images[key] = url
+                }
+            }
+        }
+        categoryImages = images
         let forest = CategoryNode.forest(from: value)
         if !forest.isEmpty { categories = forest }
     }
@@ -161,9 +173,22 @@ final class AppState: ObservableObject {
         return CategoryInfo(json: data)
     }
 
-    func itemDetail(id: String) async throws -> ItemDetail? {
-        let data = try await api.item(itemId: id)
-        return ItemDetail(json: data, mediaServer: mediaServer)
+    func itemDetail(id: String, itemType: String = "1") async throws -> ItemDetail? {
+        let raw = try await api.item(itemId: id, itemType: itemType)
+        let payload: JSONValue
+        if let array = raw.arrayValue {
+            payload = array.first ?? .null
+        } else {
+            payload = raw
+        }
+        guard !payload.isNull else {
+            throw APIError(code: nil, message: "המוצר אינו זמין כרגע")
+        }
+        return ItemDetail(json: payload, mediaServer: mediaServer)
+    }
+
+    func categoryImage(id: String) -> URL? {
+        categoryImages[id]
     }
 
     func categoryNode(id: String) -> CategoryNode? {

@@ -46,13 +46,7 @@ struct CategoryRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            ZStack {
-                Circle().fill(Theme.cardStrong)
-                Text(String(node.title.prefix(1)))
-                    .font(.headline)
-                    .foregroundStyle(Theme.gold)
-            }
-            .frame(width: 46, height: 46)
+            CategoryIcon(node: node, size: 46)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(node.title)
@@ -82,13 +76,7 @@ struct CategoryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack {
-                Circle().fill(Theme.cardStrong)
-                Text(String(node.title.prefix(1)))
-                    .font(.headline)
-                    .foregroundStyle(Theme.gold)
-            }
-            .frame(width: 38, height: 38)
+            CategoryIcon(node: node, size: 38)
 
             Text(node.title)
                 .font(.subheadline.weight(.semibold))
@@ -102,6 +90,34 @@ struct CategoryCard: View {
         .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
         .padding(14)
         .cardContainer()
+    }
+}
+
+/// Category artwork from `categoriesImages`, with the initial as a fallback.
+struct CategoryIcon: View {
+    let node: CategoryNode
+    var size: CGFloat
+
+    @EnvironmentObject private var app: AppState
+
+    var body: some View {
+        if let url = app.categoryImage(id: node.id) {
+            RemoteImage(url: url)
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                        .stroke(Theme.stroke, lineWidth: 1)
+                )
+        } else {
+            ZStack {
+                Circle().fill(Theme.cardStrong)
+                Text(String(node.title.prefix(1)))
+                    .font(.headline)
+                    .foregroundStyle(Theme.gold)
+            }
+            .frame(width: size, height: size)
+        }
     }
 }
 

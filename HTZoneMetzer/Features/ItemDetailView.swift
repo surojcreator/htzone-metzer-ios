@@ -54,7 +54,13 @@ struct ItemDetailView: View {
         return !detail.inStock
     }
 
-    private var isAddDisabled: Bool { isAdding || isSelectionSoldOut }
+    private var isAddDisabled: Bool { isAdding || isSelectionSoldOut || isRedirectOnly }
+
+    /// Products answered with a `redirectUrl` have no local cart payload.
+    private var isRedirectOnly: Bool {
+        guard let detail else { return false }
+        return detail.redirectURL != nil && detail.id.isEmpty
+    }
 
     private var quantityUpperBound: Int {
         let stock = selectedStock ?? 20
@@ -216,6 +222,12 @@ struct ItemDetailView: View {
             if let url = detail.itemURL {
                 Link(destination: url) {
                     infoRow(icon: "safari", title: "פתח באתר")
+                }
+            }
+
+            if let url = detail.redirectURL {
+                Link(destination: url) {
+                    infoRow(icon: "arrow.up.right.square", title: "המוצר מפנה לעמוד חיצוני")
                 }
             }
         }
@@ -488,7 +500,7 @@ struct ItemDetailView: View {
     private func loadDetail() async {
         detailError = nil
         do {
-            if let loaded = try await app.itemDetail(id: item.id) {
+            if let loaded = try await app.itemDetail(id: item.id, itemType: item.itemType) {
                 detail = loaded
                 variantIndex = loaded.defaultVariantIndex
             } else {

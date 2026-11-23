@@ -23,6 +23,9 @@ struct HomeView: View {
                 if !app.banners.isEmpty {
                     bannerCarousel
                 }
+                if !app.ellipses.isEmpty {
+                    ellipseRow
+                }
                 searchLink
 
                 if !app.categories.isEmpty {
@@ -160,6 +163,55 @@ struct HomeView: View {
         }
         var seen = Set<String>()
         return Array(terms.filter { seen.insert($0).inserted }.prefix(12))
+    }
+
+    private var ellipseRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(app.ellipses) { item in
+                    ellipseCell(item)
+                }
+            }
+            .padding(.horizontal, 1)
+        }
+    }
+
+    @ViewBuilder
+    private func ellipseCell(_ item: EllipseItem) -> some View {
+        if let categoryId = item.categoryId, categoryId != "0" {
+            let node = app.categoryNode(id: categoryId)
+                ?? CategoryNode(id: categoryId, title: item.title, level: 1, children: [])
+            NavigationLink {
+                CategoryDetailView(node: node)
+            } label: {
+                ellipseLabel(item)
+            }
+            .buttonStyle(.plain)
+        } else if let url = item.webURL {
+            Link(destination: url) {
+                ellipseLabel(item)
+            }
+        } else {
+            ellipseLabel(item)
+        }
+    }
+
+    private func ellipseLabel(_ item: EllipseItem) -> some View {
+        VStack(spacing: 6) {
+            RemoteImage(url: item.imageURL)
+                .frame(width: 62, height: 62)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Theme.stroke, lineWidth: 1))
+            if let title = item.title.nonEmpty {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(width: 78, alignment: .top)
+            }
+        }
+        .frame(width: 78)
     }
 
     private var bannerCarousel: some View {

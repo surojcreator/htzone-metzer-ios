@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import CoreFoundation
 
 enum JSONValue: Codable, Hashable {
     case null
@@ -167,11 +168,61 @@ extension JSONValue {
     /// PHP notices after the JSON payload. Returns nil when nothing is readable.
     static func decodeResponse(_ data: Data) -> JSONValue? {
         guard !data.isEmpty else { return nil }
-        if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
-            return value
+        if let value = decodeStrict(data) { return value }
+        if let repaired = sanitizedJSON(data) {
+            if let value = decodeStrict(repaired) { return value }
+            if let value = decodeFoundation(repaired) { return value }
         }
-        guard let repaired = sanitizedJSON(data) else { return nil }
-        return try? JSONDecoder().decode(JSONValue.self, from: repaired)
+        if let value = decodeFoundation(data) { return value }
+        // Some rows are stored as Windows-1255; re-encode before giving up.
+        if let text = String(data: data, encoding: .windowsCP1255),
+           let utf8 = text.data(using: .utf8), utf8 != data {
+            if let value = decodeStrict(utf8) { return value }
+            if let repaired = sanitizedJSON(utf8) {
+                if let value = decodeStrict(repaired) { return value }
+                if let value = decodeFoundation(repaired) { return value }
+            }
+        }
+        return nil
+    }
+
+    private static func decodeStrict(_ data: Data) -> JSONValue? {
+        try? JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    private static func decodeFoundation(_ data: Data) -> JSONValue? {
+        guard let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+            return nil
+        }
+        return JSONValue(foundation: object)
+    }
+
+    /// Converts a `JSONSerialization` value, which tolerates top-level fragments.
+    init?(foundation value: Any) {
+        switch value {
+        case is NSNull:
+            self = .null
+        case let number as NSNumber:
+            if CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() {
+                self = .bool(number.boolValue)
+            } else {
+                self = .number(number.doubleValue)
+            }
+        case let string as String:
+            self = .string(string)
+        case let array as [Any]:
+            self = .array(array.compactMap { JSONValue(foundation: $0) })
+        case let map as [String: Any]:
+            var object: [String: JSONValue] = [:]
+            for (key, item) in map {
+                if let converted = JSONValue(foundation: item) {
+                    object[key] = converted
+                }
+            }
+            self = .object(object)
+        default:
+            return nil
+        }
     }
 
     /// True when the server answered with an HTML challenge page instead of JSON.

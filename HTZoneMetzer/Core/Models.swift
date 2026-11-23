@@ -248,6 +248,8 @@ struct Item: Identifiable, Hashable {
         self.href = href
     }
 
+    static let webServer = "https://www.htzone.co.il"
+
     static func makeURL(_ raw: String?, mediaServer: String) -> URL? {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return nil
@@ -255,9 +257,31 @@ struct Item: Identifiable, Hashable {
         if raw.hasPrefix("http://") || raw.hasPrefix("https://") {
             return URL(string: raw)
         }
+        if raw.hasPrefix("//") {
+            return URL(string: "https:" + raw)
+        }
+        // The web host serves `/_media/...`; the media host serves `cms/...`.
+        if raw.hasPrefix("/_media/") || raw.hasPrefix("/design/") {
+            return URL(string: Item.webServer + raw)
+        }
         let base = mediaServer.hasSuffix("/") ? String(mediaServer.dropLast()) : mediaServer
         let path = raw.hasPrefix("/") ? raw : "/" + raw
         return URL(string: base + path)
+    }
+
+    /// Builds a browser URL for relative links (`/sale/123`, `/webview/9`, ...).
+    static func webURL(from raw: String?) -> URL? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        if raw.hasPrefix("http://") || raw.hasPrefix("https://") {
+            return URL(string: raw)
+        }
+        if raw.hasPrefix("//") {
+            return URL(string: "https:" + raw)
+        }
+        let path = raw.hasPrefix("/") ? raw : "/" + raw
+        return URL(string: Item.webServer + path)
     }
 }
 
@@ -598,13 +622,14 @@ struct ItemDetail: Hashable {
     let inStock: Bool
     let outOfStockMessage: String
     let itemURL: URL?
+    /// Set for products the server answers with a redirect instead of a payload.
+    let redirectURL: URL?
     let price: Double?
     let fullPrice: Double?
 
     init?(json: JSONValue, mediaServer: String) {
-        guard let object = json.objectValue,
-              let id = object["id"]?.stringValue else { return nil }
-        self.id = id
+        guard let object = json.objectValue else { return nil }
+        id = object["id"]?.stringValue ?? ""
         title = object["title_override"]?.stringValue?.nonEmpty
             ?? object["title"]?.stringValue
             ?? ""
@@ -725,6 +750,8 @@ struct ItemDetail: Hashable {
         inStock = !(object["stock_empty"]?.boolValue ?? false)
         outOfStockMessage = object["out_of_stock_msg"]?.stringValue ?? ""
         itemURL = object["itemUrl"]?.stringValue.flatMap { URL(string: $0) }
+        redirectURL = Item.webURL(from: object["redirectUrl"]?.stringValue)
+        if id.isEmpty, redirectURL == nil, title.isEmpty { return nil }
 
         let selectedPriceObject = ItemDetail.priceObject(object["priceArr"],
                                                          collectedId: resolvedCollectedId)
@@ -1063,48 +1090,69 @@ struct Banner: Identifiable, Hashable {
 
     static func list(from declaration: JSONValue?, mediaServer: String) -> [Banner] {
         guard let host = declaration?["home_page_bannersArr"] else { return [] }
-        var output: [Banner] = []
-
-        for entry in JSONCollections.array(host["tv_banners"]) {
-            guard let object = entry.objectValue else { continue }
+        return JSONCollections.array(host["tv_banners"]).compactMap { entry in
+            guard let object = entry.objectValue else { return nil }
             let id = object["id"]?.stringValue ?? UUID().uuidString
             let title = object["banner_alt"]?.stringValue?.nonEmpty
                 ?? object["name"]?.stringValue
                 ?? ""
             let raw = object["mobile_img"]?.stringValue?.nonEmpty
                 ?? object["banner_img"]?.stringValue
-            let web = object["href"]?.stringValue.flatMap { $0.hasPrefix("http") ? URL(string: $0) : nil }
-            output.append(Banner(
+            guard let imageURL = Item.makeURL(raw, mediaServer: mediaServer) else { return nil }
+            let href = object["href"]?.stringValue
+            return Banner(
                 id: "tv-\(id)",
                 title: title,
-                imageURL: Item.makeURL(raw, mediaServer: mediaServer),
-                categoryId: object["category_id"]?.stringValue,
-                webURL: web
-            ))
+                imageURL: imageURL,
+                categoryId: Banner.explicitCategory(object["category_id"]) ?? Banner.categoryId(from: href),
+                webURL: Item.webURL(from: href)
+            )
         }
-
-        for entry in JSONCollections.array(host["elipses"]) {
-            guard let object = entry.objectValue else { continue }
-            let id = object["id"]?.stringValue ?? UUID().uuidString
-            let raw = object["mobile_img"]?.stringValue?.nonEmpty
-                ?? object["image"]?.stringValue
-            output.append(Banner(
-                id: "el-\(id)",
-                title: object["text"]?.stringValue ?? "",
-                imageURL: Item.makeURL(raw, mediaServer: mediaServer),
-                categoryId: object["category_id"]?.stringValue ?? categoryId(from: object["href"]?.stringValue),
-                webURL: nil
-            ))
-        }
-        return output.filter { $0.imageURL != nil }
     }
 
-    private static func categoryId(from href: String?) -> String? {
+    static func explicitCategory(_ value: JSONValue?) -> String? {
+        guard let id = value?.stringValue?.nonEmpty, id != "0" else { return nil }
+        return id
+    }
+
+    /// Only `/subcategory/<id>` and `/category/<id>` links point at a category;
+    /// `/sale/...`, `/webview/...` and `/gotosite/...` are browser destinations.
+    static func categoryId(from href: String?) -> String? {
         guard let href else { return nil }
-        for part in href.split(separator: "/").reversed() where part.allSatisfy({ $0.isNumber }) {
-            return String(part)
+        let parts = href.split(separator: "/").map(String.init)
+        guard let marker = parts.firstIndex(where: { $0 == "subcategory" || $0 == "category" }),
+              parts.indices.contains(marker + 1) else { return nil }
+        let value = parts[marker + 1].split(separator: "?").first.map(String.init) ?? ""
+        guard !value.isEmpty, value.allSatisfy({ $0.isNumber }) else { return nil }
+        return value
+    }
+}
+
+/// Circular quick links shown under the home banner (`elipses`).
+struct EllipseItem: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let imageURL: URL?
+    let categoryId: String?
+    let webURL: URL?
+
+    static func list(from declaration: JSONValue?, mediaServer: String) -> [EllipseItem] {
+        guard let host = declaration?["home_page_bannersArr"] else { return [] }
+        return JSONCollections.array(host["elipses"]).compactMap { entry in
+            guard let object = entry.objectValue else { return nil }
+            let id = object["id"]?.stringValue ?? UUID().uuidString
+            let raw = object["image"]?.stringValue?.nonEmpty
+                ?? object["mobile_img"]?.stringValue
+            guard let imageURL = Item.makeURL(raw, mediaServer: mediaServer) else { return nil }
+            let href = object["href"]?.stringValue
+            return EllipseItem(
+                id: "el-\(id)",
+                title: object["text"]?.stringValue?.nonEmpty ?? "",
+                imageURL: imageURL,
+                categoryId: Banner.explicitCategory(object["category_id"]) ?? Banner.categoryId(from: href),
+                webURL: Item.webURL(from: href)
+            )
         }
-        return nil
     }
 }
 

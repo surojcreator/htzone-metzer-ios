@@ -21,7 +21,8 @@ Android app uses. It is an independent front end for an account you control.
   detail screen, per-variant stock and price, and a `collectedIds` entry on add to
   cart; cards show the distinct `sub_title` and the number of options so products
   that share a title stay distinguishable
-- Home banner carousel from `home_page_bannersArr` (`tv_banners` + `elipses`)
+- Home banner carousel from `tv_banners`, plus the `elipses` circular quick
+  links, and category artwork from `categoriesImages`
 - Search with debounce, recent searches, result grid, and category matches
   (the server caps search at 8 results)
 - Add to cart, including the metzer-credit popup flow
@@ -182,7 +183,15 @@ Response shapes that drove fixes:
 - Cards expose `last_numbers` (not `last_digits`); comments expose `content`,
   `customer_name` and `score`.
 - `getItem` requires a session (`err 150` when anonymous); every other catalog
-  call used by the grid is public.
+  call used by the grid is public. The client sends `{itemId, itemType}`, and a
+  response carrying `redirectUrl` is shown as an external link instead of being
+  treated as a parse failure.
+- Image hosts matter: `mediacrm.htzone.co.il` serves `item_image/...`,
+  `media.htzone.co.il` serves `cms/...` and `/36/...`, and `/_media/...` belongs
+  to `www.htzone.co.il`. All of them answer `403` without a User-Agent.
+- Decoding falls back to `JSONSerialization` (top-level fragments) and to
+  Windows-1255 for legacy rows, and retries read-only calls once when a body is
+  empty or unparseable.
 
 The same checks are available on the device: **חשבון → בדיקת API** runs every
 read endpoint and reports pass/fail with latency.
