@@ -10,6 +10,7 @@ import SwiftUI
 /// latency, so API health can be checked on the device without a debugger.
 struct DiagnosticsView: View {
     @EnvironmentObject private var app: AppState
+    @ObservedObject private var log = APILog.shared
 
     @State private var rows: [Row] = []
     @State private var isRunning = false
@@ -73,6 +74,22 @@ struct DiagnosticsView: View {
                     }
                     .padding(12)
                     .cardContainer()
+                }
+
+                if !log.entries.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionHeader(title: "כשלים אחרונים", actionTitle: "נקה") {
+                            log.clear()
+                        }
+                        ForEach(log.entries, id: \.self) { entry in
+                            Text(entry)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(Theme.textSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .cardContainer()
+                        }
+                    }
                 }
 
                 if !rows.isEmpty, !isRunning {

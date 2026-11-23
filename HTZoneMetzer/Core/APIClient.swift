@@ -86,6 +86,7 @@ actor APIClient {
         do {
             (raw, response) = try await session.data(for: request)
         } catch {
+            APILog.shared.record("\(method) transport \(error.localizedDescription)")
             throw APIError(code: nil, message: "שגיאת רשת: \(error.localizedDescription)")
         }
 
@@ -96,26 +97,31 @@ actor APIClient {
             throw APIError(code: nil, message: "הבקשה נחסמה על ידי Cloudflare")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw APIError(code: http.statusCode, message: "שגיאת שרת (\(http.statusCode))")
+            APILog.shared.record("\(method) HTTP \(http.statusCode) \(raw.count)B")
+            throw APIError(code: http.statusCode, message: "שגיאת שרת (\(http.statusCode)) \u{00b7} \(method)")
         }
 
         guard let root = JSONValue.decodeResponse(raw) else {
             let canRetry = attempt < 2 && APIClient.retryableOnDecodeFailure.contains(method)
             if raw.isEmpty {
+                APILog.shared.record("\(method) empty body")
                 if canRetry {
                     try? await Task.sleep(nanoseconds: 150_000_000)
                     return try await call(method, data: data, attempt: attempt + 1)
                 }
-                throw APIError(code: nil, message: "השרת החזיר תגובה ריקה. נסה שוב.")
+                throw APIError(code: nil, message: "השרת החזיר תגובה ריקה. נסה שוב. \u{00b7} \(method)")
             }
             if JSONValue.responseLooksLikeHTML(raw) {
+                APILog.shared.record("\(method) html \(raw.count)B \(APILog.preview(raw))")
                 throw APIError(code: nil, message: "השרת החזיר דף חסימה. נסה שוב בעוד רגע.")
             }
             if canRetry {
+                APILog.shared.record("\(method) retry after unparseable \(raw.count)B")
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 return try await call(method, data: data, attempt: attempt + 1)
             }
-            throw APIError(code: nil, message: "לא ניתן לקרוא את תגובת השרת")
+            APILog.shared.record("\(method) unparseable \(raw.count)B \(APILog.preview(raw))")
+            throw APIError(code: nil, message: "לא ניתן לקרוא את תגובת השרת \u{00b7} \(method)")
         }
 
         if let err = root["err"], !err.isNull {
