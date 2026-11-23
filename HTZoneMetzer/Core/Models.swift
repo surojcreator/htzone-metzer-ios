@@ -192,6 +192,10 @@ struct Item: Identifiable, Hashable {
         textInsteadPrice = object["text_instead_price"]?.stringValue ?? ""
         rating = object["review_avg"]?.doubleValue ?? object["avg_rating"]?.doubleValue ?? 0
         reviews = object["reviews"]?.intValue ?? 0
+        let typeValue = object["type_id"]?.stringValue
+        itemType = typeValue?.nonEmpty ?? "1"
+        isBanner = typeValue == "banner_item"
+        href = Item.makeURL(object["href"]?.stringValue, mediaServer: mediaServer)
         isCollected = (object["collected"]?.boolValue ?? false)
             || !((object["collectedIds"]?.isNull) ?? true)
         optionCount = max(Item.featureOptionCount(object["features"]),
@@ -217,15 +221,6 @@ struct Item: Identifiable, Hashable {
             return best
         }
         return value.arrayValue?.count ?? 0
-    isCollected = (object["collected"]?.boolValue ?? false)
-            || !((object["collectedIds"]?.isNull) ?? true)
-        optionCount = max(Item.featureOptionCount(object["features"]),
-                          JSONCollections.array(object["items_collected"]).count)
-        let typeValue = object["type_id"]?.stringValue
-        itemType = typeValue?.nonEmpty ?? "1"
-        isBanner = typeValue == "banner_item"
-        href = Item.makeURL(object["href"]?.stringValue, mediaServer: mediaServer)
-        imageURL = Item.makeURL(object["img"]?.stringValue, mediaServer: mediaServer)
     }
 
     /// Rebuilds an item from a cached snapshot (favourites / recently viewed).
