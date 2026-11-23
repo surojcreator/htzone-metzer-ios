@@ -25,10 +25,10 @@ Android app uses. It is an independent front end for an account you control.
 - Search with debounce, recent searches, result grid, and category matches
   (the server caps search at 8 results)
 - Add to cart, including the metzer-credit popup flow
-- Local favourites (heart on every card and on the detail screen) and a
-  recently-viewed rail on the home screen, both cached on-device
-- Product sharing from the detail toolbar, pull-to-refresh on home, category,
-  cart and order lists
+- Server-backed favourites (`{itemId, itemType}`) with an on-device cache, a
+  heart on every card and the detail screen, and a favourites screen
+- Recently-viewed rail on the home screen, product sharing, pull-to-refresh, and
+  an in-app API diagnostics screen that exercises every read endpoint
 - Cart view with remove and total
 - Orders list and order detail (line items, supplier totals, payments)
 - Account: wallet, saved cards (masked), addresses, about page
@@ -113,6 +113,17 @@ CommonCrypto + CryptoKit.
 | Cart | `getCart` | `{}` |
 | Add to cart | `addToCart` | `itemId`, `quantity`, and `collectedIds: [{collectedId, quantity}]` for collected products |
 | Remove from cart | `removeFromCart` | `itemKey` |
+| Favourites | `getUserFavorites` | `{}` |
+| Add favourite | `addToFavorites` | `itemId`, `itemType` |
+| Remove favourite | `removeFromFavorites` | `itemId`, `itemType` |
+| Companies (public) | `getCompanies` | `{}` |
+| Cities (public) | `getCities` | `{}` |
+| Chitabox list (public) | `getChitaboxList` | `{}` |
+| Boxit areas | `getBoxitAreas` | `{}` |
+| Boxit cities | `getBoxitCities` | `areaId` |
+| Boxit lockers | `getBoxitLockers` | `cityCode` |
+| Streets | `getStreets` | `cityId` |
+| Host URL | `getHostUrl` | `{}` |
 | Popup validation | `popup_validate` | `response_key` + popup inputs |
 | Orders | `getUserOrders` | `{}` |
 | Order detail | `getUserOrder` | `orderId` |
@@ -122,6 +133,59 @@ CommonCrypto + CryptoKit.
 
 Numeric parameters are sanitised server-side to digits only; the app sends plain
 values and does not attempt to encode anything special.
+
+`itemType` is the product's `type_id`, defaulting to `1`. Items whose `type_id`
+is `banner_item` are promo rows, not products; the app filters them out of
+product grids.
+
+### Endpoints used by the official client but not driven yet
+
+The request classes in the Hermes bundle expose the parameter names below. They
+are not wired into the iOS app because they change server state (orders,
+addresses, credentials) and cannot be verified without a live account.
+
+| Method | Data |
+|---|---|
+| `verifyCart` | `isQuick` |
+| `setCartDeliveries` | per-item `selectedDeliveryValue` |
+| `validateCoupon` | coupon code |
+| `submitOrder`, `finalizeOrder` | checkout payload |
+| `addUserAddress`, `editUserAddress`, `removeUserAddress` | address fields |
+| `editUserInformation`, `newPassword`, `forgotPassword` | account fields |
+| `addUser`, `SendRegistrationEmail`, `loginByAuthCode`, `loginbyRegisterLink` | registration / SSO |
+| `startUserDeleteProcess`, `finalizeUserDelete` | account deletion |
+| `rateApp`, `registerPushNotification`, `sendLeadInformation`, `setSettings`, `clearSession`, `errorReprot` | misc |
+
+## Verified against the live API
+
+The published client was exercised against `api/app/metzer/android/1.6/` with a
+real session. Public and authenticated calls all returned `status: 1`:
+
+- config/catalog: `generalDeclaration`, `getCategory`, `getItems`,
+  `searchQuery`, `getPopularSearches`, `getContentPage`
+- session: `loginUser`, `getUserWallet`, `getUserCards`, `getUserOrders`,
+  `getCart`, `getUserFavorites`, `checkProState`, `getItem`
+- favourites write: `addToFavorites` then `removeFromFavorites` (list restored)
+- reference data: `getCompanies`, `getCities`, `getChitaboxList`,
+  `getBoxitAreas`, `getHostUrl`, `getItemComments`, `getItemMoreProducts`
+
+Response shapes that drove fixes:
+
+- `items_collected` is a keyed map whose **key is the collected id**; its rows
+  carry `title`, `price`, `full_price`, `total_stock`, `max_purchase` but no
+  `id`.
+- `total_stock` is authoritative. `items_stock.total_active_items` is 0 or
+  negative for unlimited/withdrawn rows, so it is only a fallback.
+- The variant dimension is often **absent from `extra_features`**; chip labels
+  must come from `items_collected.title`, and the group title is matched by
+  label overlap rather than by option count.
+- Cards expose `last_numbers` (not `last_digits`); comments expose `content`,
+  `customer_name` and `score`.
+- `getItem` requires a session (`err 150` when anonymous); every other catalog
+  call used by the grid is public.
+
+The same checks are available on the device: **חשבון → בדיקת API** runs every
+read endpoint and reports pass/fail with latency.
 
 ## Security decisions
 
@@ -148,8 +212,8 @@ values and does not attempt to encode anything special.
 - Filters and brand shortcuts are not exposed: `getCategory.filters` and
   `dynamic_fieldsArr` come back empty and `getItems.brands` is `null` for the
   catalog branches tested.
-- Favourites endpoints require a parameter shape that was not identified, so
-  favourites are stored locally (the UI never calls the server for them).
+- Favourites use the server list, cached on device so the screen still renders
+  offline; a rejected write rolls back the optimistic heart.
 
 ## Disclaimer
 

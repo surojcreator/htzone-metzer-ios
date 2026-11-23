@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
                 _ = try await api.orders()
                 phase = .loggedIn
                 await refreshCart()
+                await refreshFavorites()
             } catch let error as APIError where error.isAuthRequired {
                 ProfileStore.clear()
                 profile = nil
@@ -109,6 +110,7 @@ final class AppState: ObservableObject {
             }
             await refreshCart()
             phase = .loggedIn
+            await refreshFavorites()
         } catch {
             errorMessage = message(for: error)
         }
@@ -138,9 +140,10 @@ final class AppState: ObservableObject {
     func fetchItems(categoryId: String, page: Int, sortById: Int) async throws -> ItemsPage {
         let data = try await api.items(categoryId: categoryId, page: page, sortById: sortById)
         let payload = data[categoryId] ?? data.objectValue?.values.first ?? .null
-        let items = JSONCollections.array(payload["itemsArr"]).compactMap {
+        let mapped = JSONCollections.array(payload["itemsArr"]).compactMap {
             Item(json: $0, mediaServer: mediaServer)
         }
+        let items = mapped.filter { !$0.isBanner }
         let total = payload["total_items"]?.intValue
         let from = payload["from"]?.intValue
         let to = payload["to"]?.intValue
@@ -150,7 +153,7 @@ final class AppState: ObservableObject {
         } else {
             pageSize = 100
         }
-        return ItemsPage(items: items, total: total, rawCount: items.count, pageSize: pageSize)
+        return ItemsPage(items: items, total: total, rawCount: mapped.count, pageSize: pageSize)
     }
 
     func categoryInfo(id: String) async throws -> CategoryInfo? {
@@ -178,14 +181,14 @@ final class AppState: ObservableObject {
         let data = try await api.search(query)
         return JSONCollections.array(data["res"]).compactMap {
             Item(json: $0, mediaServer: mediaServer)
-        }
+        }.filter { !$0.isBanner }
     }
 
     func searchResults(_ query: String) async throws -> (items: [Item], categories: [CategoryNode]) {
         let data = try await api.search(query)
         let items = JSONCollections.array(data["res"]).compactMap {
             Item(json: $0, mediaServer: mediaServer)
-        }
+        }.filter { !$0.isBanner }
         let categories = JSONCollections.array(data["categories"]).compactMap {
             CategoryNode.node(from: $0, level: 2)
         }
@@ -233,7 +236,41 @@ final class AppState: ObservableObject {
         let values = JSONCollections.array(data["itemsArr"]) + JSONCollections.array(data["bestSellers"])
         var seen = Set<String>()
         return values.compactMap { Item(json: $0, mediaServer: mediaServer) }
-            .filter { seen.insert($0.id).inserted }
+            .filter { !$0.isBanner && seen.insert($0.id).inserted }
+    }
+
+    // MARK: - Favourites
+
+    /// Pulls the server's favourites list and refreshes the local cache.
+    func refreshFavorites() async {
+        guard case .loggedIn = phase else { return }
+        do {
+            let data = try await api.favorites()
+            applyFavorites(data)
+        } catch {
+            // Keep the cached list when the call fails.
+        }
+    }
+
+    /// Optimistic favourites change; rolls the local cache back if rejected.
+    func syncFavorite(_ item: Item, favorite: Bool) async {
+        do {
+            let data = favorite
+                ? try await api.addFavorite(itemId: item.id, itemType: item.itemType)
+                : try await api.removeFavorite(itemId: item.id, itemType: item.itemType)
+            applyFavorites(data)
+        } catch {
+            LibraryStore.shared.setFavorite(item, favorite: !favorite)
+            errorMessage = message(for: error)
+        }
+    }
+
+    private func applyFavorites(_ data: JSONValue) {
+        guard data["favorites_itemsArr"] != nil else { return }
+        let items = JSONCollections.array(data["favorites_itemsArr"]).compactMap {
+            Item(json: $0, mediaServer: mediaServer)
+        }
+        LibraryStore.shared.replaceFavorites(with: items)
     }
 
     func contentPage(id: String) async throws -> JSONValue {

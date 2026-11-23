@@ -187,6 +187,15 @@ struct AccountView: View {
                 linkRow(icon: "info.circle.fill", title: "אודות מצ״ר")
             }
             .buttonStyle(.plain)
+
+            Divider().overlay(Theme.stroke)
+
+            NavigationLink {
+                DiagnosticsView()
+            } label: {
+                linkRow(icon: "waveform.path.ecg", title: "בדיקת API")
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)

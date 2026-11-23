@@ -188,6 +188,60 @@ actor APIClient {
         try await call("getItem", data: ["itemId": numeric(itemId)])
     }
 
+    // MARK: - Favourites / public reference data
+
+    func favorites() async throws -> JSONValue {
+        try await call("getUserFavorites")
+    }
+
+    /// The official client sends exactly `{ itemId, itemType }`;
+    /// `itemType` is the product's `type_id` (1 for regular products).
+    func addFavorite(itemId: String, itemType: String) async throws -> JSONValue {
+        try await call("addToFavorites", data: [
+            "itemId": numeric(itemId),
+            "itemType": numeric(itemType)
+        ])
+    }
+
+    func removeFavorite(itemId: String, itemType: String) async throws -> JSONValue {
+        try await call("removeFromFavorites", data: [
+            "itemId": numeric(itemId),
+            "itemType": numeric(itemType)
+        ])
+    }
+
+    func companies() async throws -> JSONValue {
+        try await call("getCompanies")
+    }
+
+    func cities() async throws -> JSONValue {
+        try await call("getCities")
+    }
+
+    func chitaboxList() async throws -> JSONValue {
+        try await call("getChitaboxList")
+    }
+
+    func boxitAreas() async throws -> JSONValue {
+        try await call("getBoxitAreas")
+    }
+
+    func boxitCities(areaId: String) async throws -> JSONValue {
+        try await call("getBoxitCities", data: ["areaId": numeric(areaId)])
+    }
+
+    func boxitLockers(cityCode: String) async throws -> JSONValue {
+        try await call("getBoxitLockers", data: ["cityCode": numeric(cityCode)])
+    }
+
+    func streets(cityId: String) async throws -> JSONValue {
+        try await call("getStreets", data: ["cityId": numeric(cityId)])
+    }
+
+    func hostURL() async throws -> JSONValue {
+        try await call("getHostUrl")
+    }
+
     // MARK: - Cart
 
     func cart() async throws -> JSONValue {

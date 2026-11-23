@@ -107,9 +107,11 @@ struct ItemDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
+                    let target = !library.isFavorite(item.id)
                     withAnimation(.easeInOut(duration: 0.15)) {
-                        library.toggleFavorite(item)
+                        library.setFavorite(item, favorite: target)
                     }
+                    Task { await app.syncFavorite(item, favorite: target) }
                 } label: {
                     Image(systemName: library.isFavorite(item.id) ? "heart.fill" : "heart")
                         .foregroundStyle(library.isFavorite(item.id) ? Theme.danger : Theme.accent)

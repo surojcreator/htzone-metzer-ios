@@ -9,15 +9,18 @@ import SwiftUI
 struct FavoriteButton: View {
     let item: Item
 
+    @EnvironmentObject private var app: AppState
     @EnvironmentObject private var library: LibraryStore
 
     private var isFavorite: Bool { library.isFavorite(item.id) }
 
     var body: some View {
         Button {
+            let target = !isFavorite
             withAnimation(.easeInOut(duration: 0.15)) {
-                library.toggleFavorite(item)
+                library.setFavorite(item, favorite: target)
             }
+            Task { await app.syncFavorite(item, favorite: target) }
         } label: {
             Image(systemName: isFavorite ? "heart.fill" : "heart")
                 .font(.system(size: 14, weight: .semibold))

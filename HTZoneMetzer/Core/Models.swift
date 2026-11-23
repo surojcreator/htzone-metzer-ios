@@ -166,6 +166,10 @@ struct Item: Identifiable, Hashable {
     let isCollected: Bool
     /// Number of values in the widest variant dimension (0 when there are none).
     let optionCount: Int
+    /// `type_id`; "1" for regular products, "banner_item" for promo rows.
+    let itemType: String
+    let isBanner: Bool
+    let href: URL?
 
     init?(json: JSONValue, mediaServer: String) {
         guard let object = json.objectValue,
@@ -213,13 +217,23 @@ struct Item: Identifiable, Hashable {
             return best
         }
         return value.arrayValue?.count ?? 0
+    isCollected = (object["collected"]?.boolValue ?? false)
+            || !((object["collectedIds"]?.isNull) ?? true)
+        optionCount = max(Item.featureOptionCount(object["features"]),
+                          JSONCollections.array(object["items_collected"]).count)
+        let typeValue = object["type_id"]?.stringValue
+        itemType = typeValue?.nonEmpty ?? "1"
+        isBanner = typeValue == "banner_item"
+        href = Item.makeURL(object["href"]?.stringValue, mediaServer: mediaServer)
+        imageURL = Item.makeURL(object["img"]?.stringValue, mediaServer: mediaServer)
     }
 
     /// Rebuilds an item from a cached snapshot (favourites / recently viewed).
     init(id: String, title: String, subtitle: String, price: Double?, fullPrice: Double?,
          imageURL: URL?, brand: String, category: String, isPriceFrom: Bool,
          textInsteadPrice: String, rating: Double, reviews: Int,
-         isCollected: Bool, optionCount: Int) {
+         isCollected: Bool, optionCount: Int,
+         itemType: String = "1", isBanner: Bool = false, href: URL? = nil) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
@@ -234,6 +248,9 @@ struct Item: Identifiable, Hashable {
         self.reviews = reviews
         self.isCollected = isCollected
         self.optionCount = optionCount
+        self.itemType = itemType
+        self.isBanner = isBanner
+        self.href = href
     }
 
     static func makeURL(_ raw: String?, mediaServer: String) -> URL? {
@@ -411,12 +428,26 @@ struct CardInfo: Identifiable, Hashable {
         JSONCollections.array(data["cards_arr"]).compactMap { value in
             guard let object = value.objectValue else { return nil }
             let id = object["id"]?.stringValue ?? UUID().uuidString
+            // Live payloads use `last_numbers`; keep `last_digits` as a fallback.
+            let digits = object["last_numbers"]?.stringValue?.nonEmpty
+                ?? object["last_digits"]?.stringValue?.nonEmpty
+                ?? ""
+            let company: String
+            if object["is_htz_card"]?.boolValue == true {
+                company = "כרטיס HTZone"
+            } else if object["is_poalim_card"]?.boolValue == true {
+                company = "בנק הפועלים"
+            } else {
+                company = object["creditCompany"]?.stringValue ?? ""
+            }
+            let masked = object["cardMask"]?.stringValue?.nonEmpty
+                ?? (digits.isEmpty ? "" : "•••• \(digits)")
             return CardInfo(
                 id: id,
-                lastDigits: object["last_digits"]?.stringValue ?? "",
-                company: object["creditCompany"]?.stringValue ?? "",
+                lastDigits: digits,
+                company: company,
                 expiry: object["cardExpiration"]?.stringValue ?? "",
-                masked: object["cardMask"]?.stringValue ?? ""
+                masked: masked
             )
         }
     }
@@ -433,18 +464,26 @@ struct ItemComment: Identifiable, Hashable {
     static func list(from data: JSONValue) -> [ItemComment] {
         JSONCollections.array(data["commentsArr"]).compactMap { value in
             guard let object = value.objectValue else { return nil }
-            let text = object["comment"]?.stringValue?.nonEmpty
+            let text = object["content"]?.stringValue?.nonEmpty
+                ?? object["comment"]?.stringValue?.nonEmpty
                 ?? object["text"]?.stringValue?.nonEmpty
-                ?? object["content"]?.stringValue?.nonEmpty
                 ?? ""
             guard !text.isEmpty else { return nil }
+            // Live rows carry `customer_name` (and split first/last names).
+            let firstLast = [object["first_name"]?.stringValue, object["last_name"]?.stringValue]
+                .compactMap { $0?.nonEmpty }
+                .joined(separator: " ")
+            let author = object["customer_name"]?.stringValue?.nonEmpty
+                ?? firstLast.nonEmpty
+                ?? object["user_name"]?.stringValue?.nonEmpty
+                ?? object["name"]?.stringValue
+                ?? ""
             return ItemComment(
                 id: object["id"]?.stringValue ?? UUID().uuidString,
                 text: text,
-                author: object["user_name"]?.stringValue
-                    ?? object["name"]?.stringValue
-                    ?? "",
-                rating: object["rating"]?.doubleValue ?? 0
+                author: author,
+                // Live rows expose the rating as `score`.
+                rating: object["score"]?.doubleValue ?? object["rating"]?.doubleValue ?? 0
             )
         }
     }
@@ -627,7 +666,7 @@ struct ItemDetail: Hashable {
             if collectedItems.count > 1 {
                 // `items_collected` is authoritative: one row per purchasable
                 // variant, with its own title, price and purchase limit.
-                let titleGroup = parsedGroups.first { $0.options.count == collectedItems.count }
+                let titleGroup = ItemDetail.matchingTitleGroup(parsedGroups, collected: collectedItems)
                 let options = collectedItems.indices.map { index -> VariantOption in
                     let item = collectedItems[index]
                     let stock = stockByCollected[item.id]
@@ -642,7 +681,9 @@ struct ItemDetail: Hashable {
                         id: item.id,
                         title: title,
                         collectedId: item.id,
-                        stock: stock?.stock ?? item.totalStock,
+                        // `total_stock` is the curated counter; `items_stock`
+                        // active counts go to 0/-1 for unlimited variants.
+                        stock: item.totalStock ?? stock?.stock,
                         maxPurchase: item.maxPurchase,
                         price: item.price ?? stock?.price,
                         fullPrice: item.fullPrice ?? stock?.fullPrice
@@ -849,22 +890,68 @@ struct ItemDetail: Hashable {
         labelled.append((id: optionId, title: label))
     }
 
-    /// `items_collected` rows: id, title, price and purchase limits per variant.
+    /// `items_collected` is a keyed map whose **key is the collected id** (the
+    /// rows themselves carry no `id`). Values carry title, price and limits.
     private static func parseCollectedItems(_ value: JSONValue?) -> [ParsedCollectedItem] {
-        JSONCollections.array(value).compactMap { entry in
-            guard let object = entry.objectValue else { return nil }
+        var results: [ParsedCollectedItem] = []
+
+        func append(_ object: [String: JSONValue], key: String?) {
             let id = object["id"]?.stringValue?.nonEmpty
                 ?? object["collected_id"]?.stringValue?.nonEmpty
-            guard let id else { return nil }
-            return ParsedCollectedItem(
+                ?? key
+            guard let id, !results.contains(where: { $0.id == id }) else { return }
+            results.append(ParsedCollectedItem(
                 id: id,
                 title: object["title"]?.stringValue?.nonEmpty ?? "",
                 price: ItemDetail.positive(object["price"]?.doubleValue),
                 fullPrice: ItemDetail.positive(object["full_price"]?.doubleValue),
-                totalStock: object["total_stock"]?.intValue,
+                totalStock: ItemDetail.clampedStock(object["total_stock"]?.intValue),
                 maxPurchase: object["max_purchase"]?.intValue
-            )
+            ))
         }
+
+        if let map = value?.objectValue {
+            for key in map.keys.sorted(by: JSONCollections.numericOrder) {
+                if let object = map[key]?.objectValue { append(object, key: key) }
+            }
+        } else {
+            for entry in JSONCollections.array(value) {
+                if let object = entry.objectValue { append(object, key: nil) }
+            }
+        }
+        return results
+    }
+
+    /// Negative counters appear in live data for withdrawn rows; treat as none.
+    private static func clampedStock(_ value: Int?) -> Int? {
+        guard let value else { return nil }
+        return max(0, value)
+    }
+
+    /// Feature-group titles are not always present for the collected dimension,
+    /// so match the group whose option labels line up with the variant titles.
+    private static func matchingTitleGroup(_ groups: [ParsedFeatureGroup],
+                                           collected: [ParsedCollectedItem]) -> ParsedFeatureGroup? {
+        guard !collected.isEmpty else { return nil }
+        let ranked = groups.map { group -> (ParsedFeatureGroup, Int) in
+            let score = group.options.reduce(0) { total, option in
+                let hit = collected.contains { item in
+                    ItemDetail.titlesMatch(option.title, item.title)
+                }
+                return total + (hit ? 1 : 0)
+            }
+            return (group, score)
+        }
+        return ranked.filter { $0.1 > 0 }.max { $0.1 < $1.1 }?.0
+    }
+
+    private static func titlesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !left.isEmpty, !right.isEmpty else { return false }
+        if left == right { return true }
+        guard left.count >= 2, right.count >= 2 else { return false }
+        return left.contains(right) || right.contains(left)
     }
 
     private static func positive(_ value: Double?) -> Double? {
@@ -880,9 +967,10 @@ struct ItemDetail: Hashable {
             let collectedId = object["item_collected_id"]?.stringValue?.nonEmpty
                 ?? object["collected_id"]?.stringValue?.nonEmpty
             guard let collectedId else { return nil }
-            let stock = object["total_active_items"]?.intValue
+            let active = object["total_active_items"]?.intValue
                 ?? object["stock"]?.intValue
                 ?? 0
+            let stock = max(0, active)
             let id = object["item_collected_id"]?.stringValue
                 ?? object["id"]?.stringValue
                 ?? collectedId

@@ -22,6 +22,8 @@ struct LibraryItem: Codable, Identifiable, Hashable {
     let reviews: Int
     let isCollected: Bool
     let optionCount: Int
+    /// Optional so favourites cached by earlier builds still decode.
+    let itemType: String?
 
     init(item: Item) {
         id = item.id
@@ -38,6 +40,7 @@ struct LibraryItem: Codable, Identifiable, Hashable {
         reviews = item.reviews
         isCollected = item.isCollected
         optionCount = item.optionCount
+        itemType = item.itemType
     }
 
     var imageURL: URL? {
@@ -58,7 +61,8 @@ struct LibraryItem: Codable, Identifiable, Hashable {
              rating: rating,
              reviews: reviews,
              isCollected: isCollected,
-             optionCount: optionCount)
+             optionCount: optionCount,
+             itemType: itemType ?? "1")
     }
 }
 
@@ -84,6 +88,29 @@ final class LibraryStore: ObservableObject {
 
     func isFavorite(_ id: String) -> Bool {
         favorites.contains { $0.id == id }
+    }
+
+    /// Replaces the cache with the server's favourites list.
+    func replaceFavorites(with items: [Item]) {
+        favorites = items.map { LibraryItem(item: $0) }
+        if favorites.count > favoritesLimit {
+            favorites = Array(favorites.prefix(favoritesLimit))
+        }
+        LibraryStore.save(favorites, favoritesKey)
+    }
+
+    /// Local, idempotent update used for optimistic UI and rollback.
+    func setFavorite(_ item: Item, favorite: Bool) {
+        if favorite {
+            guard !isFavorite(item.id) else { return }
+            favorites.insert(LibraryItem(item: item), at: 0)
+            if favorites.count > favoritesLimit {
+                favorites = Array(favorites.prefix(favoritesLimit))
+            }
+        } else {
+            favorites.removeAll { $0.id == item.id }
+        }
+        LibraryStore.save(favorites, favoritesKey)
     }
 
     func toggleFavorite(_ item: Item) {
